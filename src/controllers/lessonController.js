@@ -14,6 +14,156 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
+// DALL-E Image Generation Function
+const generateDiagram = async (description, subject = "biology") => {
+  try {
+    // Enhanced prompts for better educational diagrams
+const subjectPrompts = {
+ biology: `Create a high-quality, educational biology diagram of ${description}. 
+Use a clean, professional scientific illustration style with:
+- Accurate anatomical structures
+- Clear, properly spelled English labels for each part
+- Straight, neat arrows pointing from each label to the correct part
+- High contrast for visibility
+- A white background for textbook-style clarity
+
+Ensure that:
+- All major biological parts are labeled
+- Labels do not overlap and are easy to read
+- Label text uses consistent font and size
+- Use standard biological terminology appropriate to the topic
+
+`,
+  
+  chemistry: `Create a clear, educational diagram of ${description}. Style: clean scientific illustration with visible molecular structures, chemical bonds, and clear, accurate labels in English. Use arrows or callouts where needed. White background, high-quality for textbook use.`,
+
+  physics: `Create a clear, educational diagram of ${description}. Style: precise technical illustration with clearly visible measurement indicators and labels in correct English. Use proper symbols and units. All elements should be well-spaced and readable. White background, textbook-quality.`,
+
+  mathematics: `Create a clean educational diagram of ${description}. Use accurate geometric shapes, coordinate systems, and mathematical notations. Labels should be in correct and readable English. Ensure all labels, arrows, and markings are clear and high contrast. White background, textbook quality.`,
+
+  maths: `Create a clean educational diagram of ${description}. Use accurate geometric shapes, coordinate systems, and mathematical notations. Labels should be in correct and readable English. Ensure all labels, arrows, and markings are clear and high contrast. White background, textbook quality.`,
+
+  "english language": `Create a clear, structured diagram of ${description}. Style: language analysis diagram with visible text boxes and arrows showing relationships. Use correct English for all labels and explanations. Layout should be organized and readable. White background, textbook quality.`,
+
+  "english literature": `Create a clear, structured diagram of ${description}. Style: literary analysis diagram with organized layout showing relationships between themes, characters, and ideas. All labels should be in proper English and clearly visible. Use arrows or connectors where necessary. White background, textbook quality.`,
+
+  "combined science": `Create a clear, educational diagram of ${description}. Combine biology, chemistry, and physics concepts using clean, labeled visuals. All labels should be written in correct English and be clearly visible. Use arrows and callouts as needed. White background, professional textbook quality.`,
+
+  default: `Create a clear educational diagram of ${description}. Style: clean, well-organized illustration with clear, readable English labels. Ensure visual clarity with arrows, spacing, and contrast. White background, suitable for professional educational materials.`
+};
+
+
+    const enhancedPrompt = subjectPrompts[subject.toLowerCase()] || subjectPrompts.default;
+
+    const response = await axios.post(
+      "https://api.openai.com/v1/images/generations",
+      {
+        model: "dall-e-3",
+        prompt: enhancedPrompt,
+        n: 1,
+        size: "1024x1024",
+        quality: "standard",
+        style: "natural"
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 30000 // 30 second timeout
+      }
+    );
+
+    if (response.data?.data?.[0]?.url) {
+      return {
+        success: true,
+        imageUrl: response.data.data[0].url,
+        revisedPrompt: response.data.data[0].revised_prompt
+      };
+    } else {
+      throw new Error("No image URL returned from DALL-E");
+    }
+  } catch (error) {
+    console.error("DALL-E Error:", error.response?.data || error.message);
+    return {
+      success: false,
+      error: error.response?.data?.error?.message || error.message
+    };
+  }
+};
+
+// Enhanced function to process lesson content and generate diagrams
+const processLessonContent = async (content, subject) => {
+  try {
+    // Regex to find [CreateVisual: "description"] patterns
+    const visualPattern = /\[CreateVisual:\s*["']([^"']+)["']\]/g;
+    let processedContent = content;
+    const matches = [...content.matchAll(visualPattern)];
+    
+    console.log(`Found ${matches.length} visual requests in lesson content`);
+
+    // Process each visual request
+    for (const match of matches) {
+      const fullMatch = match[0];
+      const description = match[1];
+      
+      console.log(`Generating diagram for: ${description}`);
+      
+      // Generate the diagram
+      const diagramResult = await generateDiagram(description, subject);
+      
+      if (diagramResult.success) {
+        // Replace the text with an actual image
+        const imageHtml = `
+        <div class="lesson-diagram" style="margin: 20px 0; text-align: center;">
+          <img src="${diagramResult.imageUrl}" alt="${description}" style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+          <p style="font-style: italic; color: #666; margin-top: 10px; font-size: 14px;">Figure: ${description}</p>
+        </div>`;
+        
+        processedContent = processedContent.replace(fullMatch, imageHtml);
+        console.log(`Successfully generated diagram for: ${description}`);
+      } else {
+        // Fallback to text if image generation fails
+        const fallbackHtml = `
+        <div class="lesson-diagram-fallback" style="margin: 20px 0; padding: 15px; background: #f8f9fa; border-left: 4px solid #007bff; border-radius: 4px;">
+          <p style="margin: 0; font-weight: bold; color: #007bff;">📊 Visual: ${description}</p>
+          <p style="margin: 5px 0 0 0; font-size: 12px; color: #666;">*Diagram generation temporarily unavailable*</p>
+        </div>`;
+        
+        processedContent = processedContent.replace(fullMatch, fallbackHtml);
+        console.log(`Fallback used for: ${description} - ${diagramResult.error}`);
+      }
+    }
+
+    return processedContent;
+  } catch (error) {
+    console.error("Error processing lesson content:", error);
+    return content; // Return original content if processing fails
+  }
+};
+
+// Check if database columns exist
+const checkDatabaseColumns = async (connection) => {
+  try {
+    const [columns] = await connection.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = DATABASE() 
+      AND TABLE_NAME = 'session_messages'
+    `);
+    
+    const columnNames = columns.map(col => col.COLUMN_NAME);
+    
+    return {
+      hasProcessedContent: columnNames.includes('processed_content'),
+      hasVisuals: columnNames.includes('has_visuals')
+    };
+  } catch (error) {
+    console.error("Error checking database columns:", error);
+    return { hasProcessedContent: false, hasVisuals: false };
+  }
+};
+
 // Initialize database tables
 const initializeDatabase = async () => {
   let connection;
@@ -40,21 +190,15 @@ const initializeDatabase = async () => {
       ) ENGINE=InnoDB
     `);
 
-    // 2. Verify the tutoring_sessions table was created
-    const [tables] = await connection.query(
-      "SHOW TABLES LIKE 'tutoring_sessions'"
-    );
-    if (tables.length === 0) {
-      throw new Error("Tutoring sessions table was not created");
-    }
-
-    // 3. Create session_messages table
+    // 2. Create session_messages table with all columns
     await connection.query(`
       CREATE TABLE IF NOT EXISTS session_messages (
         id INT AUTO_INCREMENT PRIMARY KEY,
         session_id INT NOT NULL,
         role ENUM('system', 'user', 'assistant') NOT NULL,
         content TEXT NOT NULL,
+        processed_content LONGTEXT NULL,
+        has_visuals BOOLEAN DEFAULT FALSE,
         timestamp VARCHAR(50),
         message_id VARCHAR(100),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -63,7 +207,43 @@ const initializeDatabase = async () => {
       ) ENGINE=InnoDB
     `);
 
-    // 4. Check if foreign key constraint already exists
+    // 3. Check if new columns exist and add them if they don't
+    const columnCheck = await checkDatabaseColumns(connection);
+    
+    if (!columnCheck.hasProcessedContent) {
+      await connection.query(`
+        ALTER TABLE session_messages 
+        ADD COLUMN processed_content LONGTEXT NULL
+      `);
+      console.log("✅ Added processed_content column");
+    }
+    
+    if (!columnCheck.hasVisuals) {
+      await connection.query(`
+        ALTER TABLE session_messages 
+        ADD COLUMN has_visuals BOOLEAN DEFAULT FALSE
+      `);
+      console.log("✅ Added has_visuals column");
+    }
+
+    // 4. Create generated_diagrams table to track DALL-E usage
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS generated_diagrams (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        session_id INT NOT NULL,
+        message_id VARCHAR(100),
+        description TEXT NOT NULL,
+        image_url VARCHAR(500),
+        revised_prompt TEXT,
+        subject VARCHAR(50),
+        generation_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        success BOOLEAN DEFAULT TRUE,
+        error_message TEXT,
+        INDEX idx_session_id (session_id)
+      ) ENGINE=InnoDB
+    `);
+
+    // Add foreign key constraints
     const [existingConstraints] = await connection.query(`
       SELECT CONSTRAINT_NAME 
       FROM information_schema.TABLE_CONSTRAINTS 
@@ -73,7 +253,6 @@ const initializeDatabase = async () => {
       AND CONSTRAINT_NAME = 'fk_session_id'
     `);
 
-    // 5. Add foreign key constraint if it doesn't exist
     if (existingConstraints.length === 0) {
       try {
         await connection.query(`
@@ -83,35 +262,13 @@ const initializeDatabase = async () => {
         `);
         console.log("✅ Foreign key constraint added successfully");
       } catch (fkError) {
-        console.warn(
-          "⚠️  Foreign key constraint failed, but tables are functional without it:",
-          fkError.message
-        );
-        // Continue without foreign key - tables will still work
+        console.warn("⚠️ Foreign key constraint failed:", fkError.message);
       }
-    } else {
-      console.log("✅ Foreign key constraint already exists");
     }
 
     console.log("✅ Database tables initialized successfully");
   } catch (error) {
     console.error("❌ Database initialization failed:", error);
-
-    // Additional diagnostic information
-    if (connection) {
-      try {
-        const [engines] = await connection.query("SHOW ENGINES");
-        console.log("Supported engines:", engines);
-
-        const [fkCheck] = await connection.query(
-          'SHOW VARIABLES LIKE "foreign_key_checks"'
-        );
-        console.log("Foreign key checks:", fkCheck);
-      } catch (diagError) {
-        console.error("Diagnostic failed:", diagError);
-      }
-    }
-
     throw error;
   } finally {
     if (connection) connection.release();
@@ -150,8 +307,12 @@ const startLesson = async (req, res) => {
         .json({ success: false, error: "Missing required fields" });
     }
 
+    console.log("Starting lesson for:", { student_name, subject, lesson_topic });
+
     // Normalize subject
     const normalizedSubject = subject.trim().toLowerCase();
+    console.log(`Received subject: ${subject}, normalized: ${normalizedSubject}`);
+
     let subjectKey;
 
     // Handle different subject name variations
@@ -161,11 +322,11 @@ const startLesson = async (req, res) => {
       subjectKey = "ENGLISH_LANGUAGE_PROMPT";
     } else if (normalizedSubject === "english literature") {
       subjectKey = "ENGLISH_LITERATURE_PROMPT";
-    } 
-    else if (normalizedSubject === "combined science") {
+    } else if (normalizedSubject === "biology") {
+      subjectKey = "BIOLOGY_PROMPT";
+    } else if (normalizedSubject === "combined science") {
       subjectKey = "COMBINED_SCIENCE_PROMPT";
-    }
-    else {
+    } else {
       return res.status(400).json({ 
         success: false, 
         error: `Unsupported subject: ${subject}` 
@@ -176,6 +337,7 @@ const startLesson = async (req, res) => {
     const examBoards = {
       "MATHS_PROMPT": ["Edexcel"],
       "ENGLISH_LANGUAGE_PROMPT": ["AQA"],
+      "BIOLOGY_PROMPT": ["AQA"],  
       "COMBINED_SCIENCE_PROMPT": ["AQA"],
       "ENGLISH_LITERATURE_PROMPT": ["AQA", "Edexcel", "OCR"]
     };
@@ -198,6 +360,9 @@ const startLesson = async (req, res) => {
 
     // Get database connection
     connection = await pool.getConnection();
+
+    // Check database columns availability
+    const columnCheck = await checkDatabaseColumns(connection);
 
     // Check if session exists
     const [existingSessions] = await connection.query(
@@ -317,6 +482,7 @@ const startLesson = async (req, res) => {
       max_tokens: 4096,
     };
 
+    console.log("Sending request to OpenAI...");
     const openaiResponse = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       payload,
@@ -328,34 +494,69 @@ const startLesson = async (req, res) => {
       }
     );
 
+    let assistantContent = openaiResponse.data.choices?.[0]?.message?.content;
+    let processedContent = assistantContent;
+    let hasVisuals = false;
+
+    // Check if the response contains visual requests and process them
+    if (assistantContent && assistantContent.includes('[CreateVisual:')) {
+      console.log("Processing visual content...");
+      hasVisuals = true;
+      processedContent = await processLessonContent(assistantContent, normalizedSubject);
+    }
+
     // Store the assistant's response if it has valid content
-    if (openaiResponse.data.choices?.[0]?.message?.content) {
+    if (assistantContent) {
       const assistantMessage = {
         role: "assistant",
-        content: openaiResponse.data.choices[0].message.content,
+        content: assistantContent,
+        processed_content: processedContent,
+        has_visuals: hasVisuals,
         timestamp: new Date().toISOString(),
         id: Date.now().toString(),
       };
 
-      await connection.query(
-        `INSERT INTO session_messages 
-         (session_id, role, content, timestamp, message_id) 
-         VALUES (?, ?, ?, ?, ?)`,
-        [
-          sessionId,
-          assistantMessage.role,
-          assistantMessage.content,
-          assistantMessage.timestamp,
-          assistantMessage.id,
-        ]
-      );
+      // Build insert query dynamically based on available columns
+      let insertQuery = `INSERT INTO session_messages (session_id, role, content, timestamp, message_id`;
+      let insertValues = [sessionId, assistantMessage.role, assistantMessage.content, assistantMessage.timestamp, assistantMessage.id];
+      
+      if (columnCheck.hasProcessedContent) {
+        insertQuery += `, processed_content`;
+        insertValues.push(assistantMessage.processed_content);
+      }
+      
+      if (columnCheck.hasVisuals) {
+        insertQuery += `, has_visuals`;
+        insertValues.push(assistantMessage.has_visuals);
+      }
+      
+      insertQuery += `) VALUES (?, ?, ?, ?, ?`;
+      if (columnCheck.hasProcessedContent) insertQuery += `, ?`;
+      if (columnCheck.hasVisuals) insertQuery += `, ?`;
+      insertQuery += `)`;
+
+      await connection.query(insertQuery, insertValues);
     }
+
+    // Return the processed content to the frontend
+    const responseData = {
+      ...openaiResponse.data,
+      choices: [{
+        ...openaiResponse.data.choices[0],
+        message: {
+          ...openaiResponse.data.choices[0].message,
+          content: processedContent // Send processed content with actual images
+        }
+      }]
+    };
 
     res.json({
       success: true,
-      data: openaiResponse.data,
+      data: responseData,
       sessionId: sessionId,
+      hasVisuals: hasVisuals
     });
+
   } catch (error) {
     console.error("Lesson Error:", error?.response?.data || error.message);
     res.status(500).json({
@@ -387,6 +588,9 @@ const getLessonHistory = async (req, res) => {
     }
 
     connection = await pool.getConnection();
+
+    // Check database columns availability
+    const columnCheck = await checkDatabaseColumns(connection);
 
     let query = `SELECT ts.*, 
                 (SELECT COUNT(*) FROM session_messages sm WHERE sm.session_id = ts.id) AS message_count
@@ -423,13 +627,29 @@ const getLessonHistory = async (req, res) => {
     // For each session, get messages if requested
     if (req.query.include_messages === "true") {
       for (let session of sessions) {
-        const [messages] = await connection.query(
-          `SELECT role, content, timestamp, message_id AS id 
-           FROM session_messages 
-           WHERE session_id = ? 
-           ORDER BY timestamp ASC`,
-          [session.id]
-        );
+        // Build message query dynamically based on available columns
+        let messageQuery = `SELECT role, `;
+        
+        if (columnCheck.hasVisuals && columnCheck.hasProcessedContent) {
+          messageQuery += `
+            CASE 
+              WHEN has_visuals = 1 AND processed_content IS NOT NULL 
+              THEN processed_content 
+              ELSE content 
+            END as content,
+            timestamp, 
+            message_id AS id,
+            has_visuals`;
+        } else {
+          messageQuery += `content, timestamp, message_id AS id`;
+          if (columnCheck.hasVisuals) {
+            messageQuery += `, has_visuals`;
+          }
+        }
+        
+        messageQuery += ` FROM session_messages WHERE session_id = ? ORDER BY timestamp ASC`;
+
+        const [messages] = await connection.query(messageQuery, [session.id]);
         session.messages = messages;
       }
     }
@@ -446,10 +666,7 @@ const getLessonHistory = async (req, res) => {
   }
 };
 
-
-
-
-// Add this to your backend code
+// Add function to save lesson data
 const saveLessonData = async (req, res) => {
   let connection;
   try {
@@ -496,6 +713,7 @@ const saveLessonData = async (req, res) => {
         lesson_quality_commentary TEXT,
         student_confidence_level VARCHAR(20),
         student_progress_trend VARCHAR(20),
+        diagrams_generated INT DEFAULT 0,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (session_id) REFERENCES tutoring_sessions(id) ON DELETE SET NULL
       ) ENGINE=InnoDB
@@ -512,6 +730,12 @@ const saveLessonData = async (req, res) => {
     const quizTopicsJson = quiz_question_topics ? 
       JSON.stringify(quiz_question_topics) : null;
 
+    // Count how many diagrams were generated for this session
+    const [diagramCount] = await connection.query(
+      `SELECT COUNT(*) as count FROM generated_diagrams WHERE session_id = ? AND success = 1`,
+      [dataToSave.session_id]
+    );
+
     // Insert the lesson data
     const [result] = await connection.query(
       `INSERT INTO lesson_data (
@@ -523,7 +747,7 @@ const saveLessonData = async (req, res) => {
         lesson_quality_score, student_engagement_score, knowledge_gain_estimate,
         quiz_score, quiz_question_topics, regeneration_count,
         regeneration_maxed, lesson_quality_commentary,
-        student_confidence_level, student_progress_trend
+        student_confidence_level, student_progress_trend, diagrams_generated
       ) VALUES (
         ?, ?, ?, ?,
         ?, ?, ?, ?, ?,
@@ -533,7 +757,7 @@ const saveLessonData = async (req, res) => {
         ?, ?, ?,
         ?, ?, ?,
         ?, ?,
-        ?, ?
+        ?, ?, ?
       )`,
       [
         dataToSave.session_id || null,
@@ -562,13 +786,17 @@ const saveLessonData = async (req, res) => {
         dataToSave.regeneration_maxed,
         dataToSave.lesson_quality_commentary,
         dataToSave.student_confidence_level,
-        dataToSave.student_progress_trend
+        dataToSave.student_progress_trend,
+        diagramCount[0].count
       ]
     );
 
     res.json({ 
       success: true, 
-      data: { id: result.insertId } 
+      data: { 
+        id: result.insertId,
+        diagrams_generated: diagramCount[0].count
+      } 
     });
   } catch (error) {
     console.error("Error saving lesson data:", error);
@@ -581,10 +809,33 @@ const saveLessonData = async (req, res) => {
   }
 };
 
+// Add endpoint to generate individual diagrams (for testing)
+const generateDiagramEndpoint = async (req, res) => {
+  try {
+    const { description, subject = "biology" } = req.body;
+    
+    if (!description) {
+      return res.status(400).json({ 
+        success: false, 
+        error: "Description is required" 
+      });
+    }
 
+    const result = await generateDiagram(description, subject);
+    res.json(result);
+  } catch (error) {
+    console.error("Generate Diagram Error:", error);
+    res.status(500).json({ 
+      success: false, 
+      error: error.message || "Internal Server Error" 
+    });
+  }
+};
 
 module.exports = {
   startLesson,
   getLessonHistory,
-  saveLessonData
+  saveLessonData,
+  generateDiagramEndpoint,
+  generateDiagram
 };

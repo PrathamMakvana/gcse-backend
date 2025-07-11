@@ -28,7 +28,11 @@ connection.connect((err) => {
 
 // Routes
 const lessonRoutes = require('./routes/lessonRoutes');
+const mockRoutes = require('./routes/mockRoutes')
+
 app.use('/api/lesson', lessonRoutes);
+app.use('/api/mock', mockRoutes);
+
 
 // Server
 const PORT = process.env.PORT || 5000;
