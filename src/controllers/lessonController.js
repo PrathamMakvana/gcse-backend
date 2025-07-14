@@ -476,9 +476,9 @@ const startLesson = async (req, res) => {
     ];
 
     const payload = {
-      model: "gpt-4o",
+      model: "gpt-4.1",
       messages: chatHistory,
-      temperature: 0.7,
+      temperature:1,
       max_tokens: 4096,
     };
 
