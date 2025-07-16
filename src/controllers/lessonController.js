@@ -9,7 +9,7 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_DATABASE,
   waitForConnections: true,
-  connectionLimit: 10,
+  connectionLimit: 20,
   queueLimit: 0,
 });
 
@@ -149,11 +149,10 @@ CRITICAL REQUIREMENTS:
 - White background with high contrast
 - Professional educational illustration style
 - Title at the top of the diagram
-`,
+`
     };
 
-    const enhancedPrompt =
-      subjectPrompts[subject.toLowerCase()] || subjectPrompts.default;
+    const enhancedPrompt = subjectPrompts[subject.toLowerCase()] || subjectPrompts.default;
 
     const response = await axios.post(
       "https://api.openai.com/v1/images/generations",
@@ -170,7 +169,7 @@ CRITICAL REQUIREMENTS:
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           "Content-Type": "application/json",
         },
-        timeout: 45000, // Increased timeout for HD generation
+        timeout: 55000, // Increased timeout for HD generation
       }
     );
 
@@ -195,35 +194,18 @@ CRITICAL REQUIREMENTS:
 };
 
 // Function to store image in database for persistent storage
-const storeImageInDatabase = async (
-  sessionId,
-  messageId,
-  description,
-  imageUrl,
-  subject,
-  success,
-  errorMessage = null
-) => {
+const storeImageInDatabase = async (sessionId, messageId, description, imageUrl, subject, success, errorMessage = null) => {
   let connection;
   try {
     connection = await pool.getConnection();
-
+    
     const [result] = await connection.query(
       `INSERT INTO generated_diagrams 
        (session_id, message_id, description, image_url, subject, success, error_message, revised_prompt) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        sessionId,
-        messageId,
-        description,
-        imageUrl,
-        subject,
-        success,
-        errorMessage,
-        null,
-      ]
+      [sessionId, messageId, description, imageUrl, subject, success, errorMessage, null]
     );
-
+    
     console.log(`Stored diagram in database with ID: ${result.insertId}`);
     return result.insertId;
   } catch (error) {
@@ -239,12 +221,12 @@ const getStoredImages = async (sessionId) => {
   let connection;
   try {
     connection = await pool.getConnection();
-
+    
     const [images] = await connection.query(
       `SELECT * FROM generated_diagrams WHERE session_id = ? ORDER BY generation_time DESC`,
       [sessionId]
     );
-
+    
     return images;
   } catch (error) {
     console.error("Error retrieving stored images:", error);
@@ -255,12 +237,7 @@ const getStoredImages = async (sessionId) => {
 };
 
 // Enhanced function to process lesson content with better image handling
-const processLessonContent = async (
-  content,
-  subject,
-  sessionId = null,
-  messageId = null
-) => {
+const processLessonContent = async (content, subject, sessionId = null, messageId = null) => {
   try {
     // Regex to find [CreateVisual: "description"] patterns
     const visualPattern = /\[CreateVisual:\s*["']([^"']+)["']\]/g;
@@ -285,11 +262,11 @@ const processLessonContent = async (
         if (sessionId && messageId) {
           try {
             diagramId = await storeImageInDatabase(
-              sessionId,
-              messageId,
-              description,
-              diagramResult.imageUrl,
-              subject,
+              sessionId, 
+              messageId, 
+              description, 
+              diagramResult.imageUrl, 
+              subject, 
               true
             );
           } catch (dbError) {
@@ -302,7 +279,7 @@ const processLessonContent = async (
         <div class="lesson-diagram" 
              style="margin: 20px 0; text-align: center; border: 2px solid #e0e0e0; border-radius: 12px; padding: 15px; background: #f9f9f9;" 
              data-diagram-id="${diagramId}" 
-             data-description="${description.replace(/"/g, "&quot;")}"
+             data-description="${description.replace(/"/g, '&quot;')}"
              data-subject="${subject}">
           <h4 style="color: #333; margin-bottom: 10px; font-size: 16px;">${description}</h4>
           <img src="${diagramResult.imageUrl}" 
@@ -320,27 +297,22 @@ const processLessonContent = async (
         </div>`;
 
         processedContent = processedContent.replace(fullMatch, imageHtml);
-        console.log(
-          `Successfully generated and stored diagram for: ${description}`
-        );
+        console.log(`Successfully generated and stored diagram for: ${description}`);
       } else {
         // Store failed attempt in database
         if (sessionId && messageId) {
           try {
             await storeImageInDatabase(
-              sessionId,
-              messageId,
-              description,
-              null,
-              subject,
-              false,
+              sessionId, 
+              messageId, 
+              description, 
+              null, 
+              subject, 
+              false, 
               diagramResult.error
             );
           } catch (dbError) {
-            console.warn(
-              "Failed to store failed image attempt in database:",
-              dbError
-            );
+            console.warn("Failed to store failed image attempt in database:", dbError);
           }
         }
 
@@ -348,7 +320,7 @@ const processLessonContent = async (
         const fallbackHtml = `
         <div class="lesson-diagram-fallback" 
              style="margin: 20px 0; padding: 20px; background: #fff3cd; border: 2px solid #ffeaa7; border-radius: 12px; border-left: 6px solid #f39c12;"
-             data-description="${description.replace(/"/g, "&quot;")}"
+             data-description="${description.replace(/"/g, '&quot;')}"
              data-subject="${subject}">
           <h4 style="margin: 0 0 10px 0; color: #856404; font-size: 16px;">📊 ${description}</h4>
           <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ffeaa7;">
@@ -360,16 +332,12 @@ const processLessonContent = async (
             </ul>
           </div>
           <p style="margin: 10px 0 0 0; font-size: 11px; color: #856404;">
-            *Diagram generation temporarily unavailable - Error: ${
-              diagramResult.error
-            }*
+            *Diagram generation temporarily unavailable - Error: ${diagramResult.error}*
           </p>
         </div>`;
 
         processedContent = processedContent.replace(fullMatch, fallbackHtml);
-        console.log(
-          `Fallback used for: ${description} - ${diagramResult.error}`
-        );
+        console.log(`Fallback used for: ${description} - ${diagramResult.error}`);
       }
     }
 
@@ -688,7 +656,6 @@ const startLesson = async (req, res) => {
         error: `Failed to fetch prompt for subject: ${subject}`,
       });
     }
-    console.log("🚀systemPrompt --->", systemPrompt);
 
     // Get database connection
     connection = await pool.getConnection();
@@ -1121,10 +1088,7 @@ const saveLessonData = async (req, res) => {
         );
         diagramCount = diagramResult[0].count;
       } catch (diagramError) {
-        console.warn(
-          "Could not count diagrams, setting to 0:",
-          diagramError.message
-        );
+        console.warn("Could not count diagrams, setting to 0:", diagramError.message);
         diagramCount = 0;
       }
     }
