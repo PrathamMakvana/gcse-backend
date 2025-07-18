@@ -169,7 +169,7 @@ CRITICAL REQUIREMENTS:
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           "Content-Type": "application/json",
         },
-        timeout: 65000, // Increased timeout for HD generation
+        timeout: 180000, // Increased timeout for HD generation
       }
     );
 
@@ -545,16 +545,24 @@ initializeDatabase().catch(console.error);
 const startLesson = async (req, res) => {
   let connection;
   try {
-    const {
-      student_id,
-      student_name,
-      subject,
-      exam_board,
-      tier,
-      lesson_topic_code,
-      lesson_topic,
-      messages = [],
-    } = req.body;
+const {
+  student_id,
+  student_name,
+  subject,
+  exam_board,
+  tier,
+  lesson_topic_code,
+  lesson_topic,
+  messages = [],
+  student_previous_summary
+} = req.body;
+
+let connection;
+connection = await pool.getConnection(); // ✅ moved here
+
+
+
+
 
     // Basic validation
     if (
@@ -674,14 +682,16 @@ const startLesson = async (req, res) => {
         if (latestMessage.content && latestMessage.content.trim().length > 0) {
           await connection.query(
             `INSERT INTO session_messages 
-             (session_id, role, content, timestamp, message_id) 
-             VALUES (?, ?, ?, ?, ?)`,
+             (session_id, role, content, timestamp, message_id,student_id) 
+             VALUES (?, ?, ?, ?, ? , ?)`,
             [
               sessionId,
               latestMessage.role,
               latestMessage.content.trim(),
               latestMessage.timestamp || new Date().toISOString(),
               latestMessage.id || null,
+              student_id
+
             ]
           );
           console.log(`Inserted 1 new message for session ${sessionId}`);
@@ -718,12 +728,13 @@ const startLesson = async (req, res) => {
             msg.content.trim(),
             msg.timestamp || new Date().toISOString(),
             msg.id || null,
+            student_id
           ]);
 
         if (messageValues.length > 0) {
           await connection.query(
             `INSERT INTO session_messages 
-             (session_id, role, content, timestamp, message_id) 
+             (session_id, role, content, timestamp, message_id,student_id) 
              VALUES ?`,
             [messageValues]
           );
@@ -732,17 +743,18 @@ const startLesson = async (req, res) => {
       }
     }
 
-    const userLessonInput = {
-      student_id,
-      student_name,
-      subject: normalizedSubject,
-      exam_board,
-      tier,
-      lesson_topic_code,
-      lesson_topic,
-      // simulate_student_responses: true,
-      lesson_start_time: new Date().toISOString(),
-    };
+   const userLessonInput = {
+  student_id,
+  student_name,
+  subject: normalizedSubject,
+  exam_board,
+  tier,
+  lesson_topic_code,
+  lesson_topic,
+  lesson_start_time: new Date().toISOString(),
+student_previous_summary,
+};
+
 
     // Filter out any messages with empty/null content
    // Instead of just taking the latest message, ensure all valid messages are included
@@ -815,14 +827,16 @@ const validMessages = messages.filter(
       };
 
       // Build insert query dynamically based on available columns
-      let insertQuery = `INSERT INTO session_messages (session_id, role, content, timestamp, message_id`;
-      let insertValues = [
-        sessionId,
-        assistantMessage.role,
-        assistantMessage.content,
-        assistantMessage.timestamp,
-        assistantMessage.id,
-      ];
+      let insertQuery = `INSERT INTO session_messages (session_id, role, content, timestamp, message_id, student_id`;
+let insertValues = [
+  sessionId,
+  assistantMessage.role,
+  assistantMessage.content,
+  assistantMessage.timestamp,
+  assistantMessage.id,
+  student_id,
+];
+
 
       if (columnCheck.hasProcessedContent) {
         insertQuery += `, processed_content`;
@@ -834,7 +848,9 @@ const validMessages = messages.filter(
         insertValues.push(assistantMessage.has_visuals);
       }
 
-      insertQuery += `) VALUES (?, ?, ?, ?, ?`;
+insertQuery += `) VALUES (?, ?, ?, ?, ?, ?`; 
+
+
       if (columnCheck.hasProcessedContent) insertQuery += `, ?`;
       if (columnCheck.hasVisuals) insertQuery += `, ?`;
       insertQuery += `)`;
