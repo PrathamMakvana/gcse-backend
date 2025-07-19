@@ -453,41 +453,78 @@ const initializeDatabase = async () => {
     `);
 
     // 6. Create lesson_data table with all columns including diagrams_generated
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS lesson_data (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        session_id INT,
-        student_id VARCHAR(100) NOT NULL,
-        student_name VARCHAR(100) NOT NULL,
-        student_summary TEXT,
-        subject VARCHAR(50) NOT NULL,
-        exam_board VARCHAR(50),
-        tier VARCHAR(20),
-        lesson_topic_code VARCHAR(50),
-        lesson_topic VARCHAR(100),
-        lesson_status VARCHAR(20),
-        lesson_start_time DATETIME,
-        lesson_end_time DATETIME,
-        lesson_duration_minutes INT,
-        student_start_time DATETIME,
-        student_end_time DATETIME,
-        student_total_duration_minutes INT,
-        designed_pacing_minutes INT,
-        lesson_quality_score INT,
-        student_engagement_score INT,
-        knowledge_gain_estimate INT,
-        quiz_score INT,
-        quiz_question_topics JSON,
-        regeneration_count INT,
-        regeneration_maxed BOOLEAN,
-        lesson_quality_commentary TEXT,
-        student_confidence_level VARCHAR(20),
-        student_progress_trend VARCHAR(20),
-        diagrams_generated INT DEFAULT 0,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (session_id) REFERENCES tutoring_sessions(id) ON DELETE SET NULL
-      ) ENGINE=InnoDB
-    `);
+   await connection.query(`
+  CREATE TABLE IF NOT EXISTS lesson_data (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    session_id INT,
+    student_id VARCHAR(100) NOT NULL,
+    student_name VARCHAR(100) NOT NULL,
+    subject VARCHAR(100) NOT NULL,
+    science_discipline TEXT,
+    exam_board VARCHAR(50),
+    tier VARCHAR(20),
+    lesson_topic_code VARCHAR(50),
+    lesson_topic VARCHAR(100),
+    lesson_run_mode ENUM('autopilot', 'manual', 'assisted'),
+    lesson_status ENUM('complete', 'incomplete'),
+    lesson_start_time DATETIME,
+    lesson_end_time DATETIME,
+    lesson_duration_minutes INT,
+    student_start_time DATETIME,
+    student_end_time DATETIME,
+    student_total_duration_minutes INT,
+    designed_pacing_minutes INT,
+    
+    -- Performance & Evaluation Scores
+    lesson_quality_score INT,
+    student_engagement_score INT,
+    comprehension_score INT,
+    knowledge_gain_estimate INT,
+    
+    -- Quiz Results
+    quiz_score INT,
+    quiz_score_total INT,
+    quiz_score_percent VARCHAR(10),
+    quiz_question_topics JSON,
+    
+    -- Socratic Results
+    socratic_score INT,
+    socratic_score_reasoning TEXT,
+    socratic_prompt TEXT,
+    socratic_response TEXT,
+    
+    -- GPT Meta
+    regeneration_count INT,
+    regeneration_maxed BOOLEAN,
+    lesson_quality_commentary TEXT,
+    
+    -- Student Profile Echo
+    student_confidence_level ENUM('High', 'Medium', 'Low'),
+    student_progress_trend ENUM('Improving', 'Stagnant', 'Declining'),
+    average_subject_score VARCHAR(20),
+    predicted_grade VARCHAR(20),
+    student_summary TEXT,
+    
+    -- Token and Cost Tracking
+    estimated_tokens_used INT,
+    estimated_cost_usd FLOAT,
+    estimated_cost_usd_formatted VARCHAR(20),
+    estimated_cost_gbp_formatted VARCHAR(20),
+    cost_per_input_token_usd FLOAT,
+    cost_per_output_token_usd FLOAT,
+    cost_per_input_token_gbp FLOAT,
+    cost_per_output_token_gbp FLOAT,
+    
+    -- Full Archive
+    full_chat_transcript LONGTEXT,
+    
+    diagrams_generated INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    FOREIGN KEY (session_id) REFERENCES tutoring_sessions(id) ON DELETE SET NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
 
     // Check if diagrams_generated column exists in lesson_data and add if missing
     const [lessonDataColumns] = await connection.query(`
@@ -987,6 +1024,7 @@ const getLessonHistory = async (req, res) => {
   }
 };
 
+
 // Add function to save lesson data
 const saveLessonData = async (req, res) => {
   let connection;
@@ -994,165 +1032,82 @@ const saveLessonData = async (req, res) => {
     const lessonData = req.body;
 
     // Validate required fields
-    if (
-      !lessonData.student_id ||
-      !lessonData.student_name ||
-      !lessonData.subject
-    ) {
-      return res.status(400).json({
-        success: false,
-        error: "Missing required fields",
-      });
+    if (!lessonData.student_id || !lessonData.student_name || !lessonData.subject) {
+      return res.status(400).json({ success: false, error: "Missing required fields" });
     }
 
     connection = await pool.getConnection();
 
-    // Check if lesson_data table exists and get its columns
-    const [tableExists] = await connection.query(`
-      SELECT COUNT(*) as count
-      FROM information_schema.tables 
-      WHERE table_schema = DATABASE() 
-      AND table_name = 'lesson_data'
-    `);
-
-    if (tableExists[0].count === 0) {
-      // Create the table if it doesn't exist
-      await connection.query(`
-        CREATE TABLE lesson_data (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          session_id INT,
-          student_id VARCHAR(100) NOT NULL,
-          student_name VARCHAR(100) NOT NULL,
-          student_summary TEXT,
-          subject VARCHAR(50) NOT NULL,
-          exam_board VARCHAR(50),
-          tier VARCHAR(20),
-          lesson_topic_code VARCHAR(50),
-          lesson_topic VARCHAR(100),
-          lesson_status VARCHAR(20),
-          lesson_start_time DATETIME,
-          lesson_end_time DATETIME,
-          lesson_duration_minutes INT,
-          student_start_time DATETIME,
-          student_end_time DATETIME,
-          student_total_duration_minutes INT,
-          designed_pacing_minutes INT,
-          lesson_quality_score INT,
-          student_engagement_score INT,
-          knowledge_gain_estimate INT,
-          quiz_score INT,
-          quiz_question_topics JSON,
-          regeneration_count INT,
-          regeneration_maxed BOOLEAN,
-          lesson_quality_commentary TEXT,
-          student_confidence_level VARCHAR(20),
-          student_progress_trend VARCHAR(20),
-          diagrams_generated INT DEFAULT 0,
-          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-          FOREIGN KEY (session_id) REFERENCES tutoring_sessions(id) ON DELETE SET NULL
-        ) ENGINE=InnoDB
-      `);
-      console.log("✅ Created lesson_data table");
-    } else {
-      // Check if diagrams_generated column exists
-      const [columns] = await connection.query(`
-        SELECT COLUMN_NAME 
-        FROM INFORMATION_SCHEMA.COLUMNS 
-        WHERE TABLE_SCHEMA = DATABASE() 
-        AND TABLE_NAME = 'lesson_data' 
-        AND COLUMN_NAME = 'diagrams_generated'
-      `);
-
-      if (columns.length === 0) {
-        // Add the missing column
-        await connection.query(`
-          ALTER TABLE lesson_data 
-          ADD COLUMN diagrams_generated INT DEFAULT 0
-        `);
-        console.log("✅ Added diagrams_generated column to lesson_data table");
-      }
-    }
-
-    // Extract all fields except full_chat_transcript
-    const {
-      full_chat_transcript, // This will be excluded
-      quiz_question_topics,
-      ...dataToSave
-    } = lessonData;
-
-    // Convert array fields to JSON strings if needed
-    const quizTopicsJson = quiz_question_topics
-      ? JSON.stringify(quiz_question_topics)
-      : null;
-
-    // Count how many diagrams were generated for this session
+    // Count generated diagrams (optional)
     let diagramCount = 0;
-    if (dataToSave.session_id) {
+    if (lessonData.session_id) {
       try {
         const [diagramResult] = await connection.query(
           `SELECT COUNT(*) as count FROM generated_diagrams WHERE session_id = ? AND success = 1`,
-          [dataToSave.session_id]
+          [lessonData.session_id]
         );
         diagramCount = diagramResult[0].count;
       } catch (diagramError) {
         console.warn("Could not count diagrams, setting to 0:", diagramError.message);
-        diagramCount = 0;
       }
     }
 
-    // Insert the lesson data
+    // Prepare the data for insertion
+    const insertData = {
+      session_id: lessonData.session_id || null,
+      student_id: lessonData.student_id,
+      student_name: lessonData.student_name,
+      subject: lessonData.subject,
+      science_discipline: lessonData.science_discipline || null,
+      exam_board: lessonData.exam_board || null,
+      tier: lessonData.tier || null,
+      lesson_topic_code: lessonData.lesson_topic_code || null,
+      lesson_topic: lessonData.lesson_topic || null,
+      lesson_run_mode: lessonData.lesson_run_mode || null,
+      lesson_status: lessonData.lesson_status || null,
+      lesson_start_time: lessonData.lesson_start_time || null,
+      lesson_end_time: lessonData.lesson_end_time || null,
+      lesson_duration_minutes: lessonData.lesson_duration_minutes || null,
+      student_start_time: lessonData.student_start_time || null,
+      student_end_time: lessonData.student_end_time || null,
+      student_total_duration_minutes: lessonData.student_total_duration_minutes || null,
+      designed_pacing_minutes: lessonData.designed_pacing_minutes || null,
+      lesson_quality_score: lessonData.lesson_quality_score || null,
+      student_engagement_score: lessonData.student_engagement_score || null,
+      comprehension_score: lessonData.comprehension_score || null,
+      knowledge_gain_estimate: lessonData.knowledge_gain_estimate || null,
+      quiz_score: lessonData.quiz_score || null,
+      quiz_score_total: lessonData.quiz_score_total || null,
+      quiz_score_percent: lessonData.quiz_score_percent || null,
+      quiz_question_topics: lessonData.quiz_question_topics ? JSON.stringify(lessonData.quiz_question_topics) : null,
+      socratic_score: lessonData.socratic_score || null,
+      socratic_score_reasoning: lessonData.socratic_score_reasoning || null,
+      socratic_prompt: lessonData.socratic_prompt || null,
+      socratic_response: lessonData.socratic_response || null,
+      regeneration_count: lessonData.regeneration_count || null,
+      regeneration_maxed: lessonData.regeneration_maxed || null,
+      lesson_quality_commentary: lessonData.lesson_quality_commentary || null,
+      student_confidence_level: lessonData.student_confidence_level || null,
+      student_progress_trend: lessonData.student_progress_trend || null,
+      average_subject_score: lessonData.average_subject_score || null,
+      predicted_grade: lessonData.predicted_grade || null,
+      student_summary: lessonData.student_summary || null,
+      estimated_tokens_used: lessonData.estimated_tokens_used || null,
+      estimated_cost_usd: lessonData.estimated_cost_usd || null,
+      estimated_cost_usd_formatted: lessonData.estimated_cost_usd_formatted || null,
+      estimated_cost_gbp_formatted: lessonData.estimated_cost_gbp_formatted || null,
+      cost_per_input_token_usd: lessonData.cost_per_input_token_usd || null,
+      cost_per_output_token_usd: lessonData.cost_per_output_token_usd || null,
+      cost_per_input_token_gbp: lessonData.cost_per_input_token_gbp || null,
+      cost_per_output_token_gbp: lessonData.cost_per_output_token_gbp || null,
+      full_chat_transcript: lessonData.full_chat_transcript || null,
+      diagrams_generated: diagramCount
+    };
+
+    // Insert into DB
     const [result] = await connection.query(
-      `INSERT INTO lesson_data (
-        session_id, student_id, student_name, student_summary,
-        subject, exam_board, tier, lesson_topic_code, lesson_topic,
-        lesson_status, lesson_start_time, lesson_end_time,
-        lesson_duration_minutes, student_start_time, student_end_time,
-        student_total_duration_minutes, designed_pacing_minutes,
-        lesson_quality_score, student_engagement_score, knowledge_gain_estimate,
-        quiz_score, quiz_question_topics, regeneration_count,
-        regeneration_maxed, lesson_quality_commentary,
-        student_confidence_level, student_progress_trend, diagrams_generated
-      ) VALUES (
-        ?, ?, ?, ?,
-        ?, ?, ?, ?, ?,
-        ?, ?, ?,
-        ?, ?, ?,
-        ?, ?,
-        ?, ?, ?,
-        ?, ?, ?,
-        ?, ?,
-        ?, ?, ?
-      )`,
-      [
-        dataToSave.session_id || null,
-        dataToSave.student_id,
-        dataToSave.student_name,
-        dataToSave.student_summary,
-        dataToSave.subject,
-        dataToSave.exam_board,
-        dataToSave.tier,
-        dataToSave.lesson_topic_code,
-        dataToSave.lesson_topic,
-        dataToSave.lesson_status,
-        dataToSave.lesson_start_time,
-        dataToSave.lesson_end_time,
-        dataToSave.lesson_duration_minutes,
-        dataToSave.student_start_time,
-        dataToSave.student_end_time,
-        dataToSave.student_total_duration_minutes,
-        dataToSave.designed_pacing_minutes,
-        dataToSave.lesson_quality_score,
-        dataToSave.student_engagement_score,
-        dataToSave.knowledge_gain_estimate,
-        dataToSave.quiz_score,
-        quizTopicsJson,
-        dataToSave.regeneration_count,
-        dataToSave.regeneration_maxed,
-        dataToSave.lesson_quality_commentary,
-        dataToSave.student_confidence_level,
-        dataToSave.student_progress_trend,
-        diagramCount,
-      ]
+      `INSERT INTO lesson_data SET ?`,
+      [insertData]
     );
 
     res.json({
@@ -1163,7 +1118,7 @@ const saveLessonData = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error saving lesson data:", error);
+    console.error("❌ Error saving lesson data:", error);
     res.status(500).json({
       success: false,
       error: error.message || "Internal Server Error",
@@ -1172,6 +1127,10 @@ const saveLessonData = async (req, res) => {
     if (connection) connection.release();
   }
 };
+
+
+
+
 
 // Add endpoint to generate individual diagrams (for testing)
 const generateDiagramEndpoint = async (req, res) => {
