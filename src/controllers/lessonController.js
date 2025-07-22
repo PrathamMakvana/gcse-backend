@@ -149,10 +149,11 @@ CRITICAL REQUIREMENTS:
 - White background with high contrast
 - Professional educational illustration style
 - Title at the top of the diagram
-`
+`,
     };
 
-    const enhancedPrompt = subjectPrompts[subject.toLowerCase()] || subjectPrompts.default;
+    const enhancedPrompt =
+      subjectPrompts[subject.toLowerCase()] || subjectPrompts.default;
 
     const response = await axios.post(
       "https://api.openai.com/v1/images/generations",
@@ -169,7 +170,7 @@ CRITICAL REQUIREMENTS:
           Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
           "Content-Type": "application/json",
         },
-        timeout: 180000, // Increased timeout for HD generation
+        timeout: 300000, // 5 minutes
       }
     );
 
@@ -194,73 +195,123 @@ CRITICAL REQUIREMENTS:
 };
 
 // Function to store image in database for persistent storage
-const storeImageInDatabase = async (sessionId, messageId, description, imageUrl, subject, success, errorMessage = null) => {
-  let connection;
+const storeImageInDatabase = async (
+  sessionId,
+  messageId,
+  description,
+  imageUrl,
+  subject,
+  success,
+  errorMessage = null,
+  connection = null // Accept connection parameter
+) => {
+  let shouldReleaseConnection = false;
+  
   try {
-    connection = await pool.getConnection();
-    
+    // Use provided connection or get new one
+    if (!connection) {
+      connection = await pool.getConnection();
+      shouldReleaseConnection = true;
+    }
+
     const [result] = await connection.query(
       `INSERT INTO generated_diagrams 
        (session_id, message_id, description, image_url, subject, success, error_message, revised_prompt) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [sessionId, messageId, description, imageUrl, subject, success, errorMessage, null]
+      [
+        sessionId,
+        messageId,
+        description,
+        imageUrl,
+        subject,
+        success,
+        errorMessage,
+        null,
+      ]
     );
-    
+
     console.log(`Stored diagram in database with ID: ${result.insertId}`);
     return result.insertId;
   } catch (error) {
     console.error("Error storing image in database:", error);
     throw error;
   } finally {
-    if (connection) connection.release();
+    // Only release if we created the connection
+    if (shouldReleaseConnection && connection) {
+      connection.release();
+    }
   }
 };
 
-
 // Enhanced function to process lesson content with better image handling
-const processLessonContent = async (content, subject, sessionId = null, messageId = null) => {
+const processLessonContent = async (
+  content,
+  subject,
+  sessionId = null,
+  messageId = null,
+  connection = null
+) => {
   try {
-    // Regex to find [CreateVisual: "description"] patterns
-    const visualPattern = /\[CreateVisual:\s*["']([^"']+)["']\]/g;
+    const inlinePattern = /\[CreateVisual:\s*["'](.+?)["']\]/g;
+    const blockPattern = /CreateVisual:\s*([^]+)/gi;
+
     let processedContent = content;
-    const matches = [...content.matchAll(visualPattern)];
+    const allMatches = [];
 
-    console.log(`Found ${matches.length} visual requests in lesson content`);
+    // 1. Match inline prompts like [CreateVisual: "Draw a plant cell"]
+    for (const match of content.matchAll(inlinePattern)) {
+      allMatches.push({
+        fullMatch: match[0],
+        description: match[1].trim(),
+      });
+    }
 
-    // Process each visual request
-    for (const match of matches) {
-      const fullMatch = match[0];
-      const description = match[1];
+    // 2. Match block prompts (multiline)
+    for (const match of content.matchAll(blockPattern)) {
+      const block = match[0].trim();
+      const focusMatch = block.match(/Focus:\s*(.+)/i);
+      const description = focusMatch ? focusMatch[1].trim() : null;
 
-      console.log(`Generating diagram for: ${description}`);
+      if (description) {
+        allMatches.push({
+          fullMatch: block,
+          description,
+        });
+      }
+    }
 
-      // Generate the diagram
+    console.log(`🧪 Found ${allMatches.length} visual requests in lesson content`);
+
+    // 3. Process each visual request
+    for (const { fullMatch, description } of allMatches) {
+      console.log(`🎯 Generating diagram for: ${description}`);
+
       const diagramResult = await generateDiagram(description, subject);
 
       if (diagramResult.success) {
-        // Store the image in database for persistence
         let diagramId = null;
         if (sessionId && messageId) {
           try {
             diagramId = await storeImageInDatabase(
-              sessionId, 
-              messageId, 
-              description, 
-              diagramResult.imageUrl, 
-              subject, 
-              true
+              sessionId,
+              messageId,
+              description,
+              diagramResult.imageUrl,
+              subject,
+              true,
+              null,
+              connection
             );
           } catch (dbError) {
-            console.warn("Failed to store image in database:", dbError);
+            console.warn("⚠ DB Store Error:", dbError);
           }
         }
 
-        // Create enhanced HTML with better styling and data attributes
         const imageHtml = `
         <div class="lesson-diagram" 
              style="margin: 20px 0; text-align: center; border: 2px solid #e0e0e0; border-radius: 12px; padding: 15px; background: #f9f9f9;" 
              data-diagram-id="${diagramId}" 
-             data-description="${description.replace(/"/g, '&quot;')}"
+             data-description="${description.replace(/"/g, "&quot;")}"
              data-subject="${subject}">
           <h4 style="color: #333; margin-bottom: 10px; font-size: 16px;">${description}</h4>
           <img src="${diagramResult.imageUrl}" 
@@ -269,7 +320,7 @@ const processLessonContent = async (content, subject, sessionId = null, messageI
                onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
           <div style="display: none; padding: 20px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; color: #721c24;">
             <p style="margin: 0; font-weight: bold;">📊 Diagram: ${description}</p>
-            <p style="margin: 5px 0 0 0; font-size: 12px;">*Image could not be loaded*</p>
+            <p style="margin: 5px 0 0 0; font-size: 12px;">Image could not be loaded</p>
           </div>
           <p style="font-style: italic; color: #666; margin-top: 10px; font-size: 12px;">
             Subject: ${subject.charAt(0).toUpperCase() + subject.slice(1)} | 
@@ -278,56 +329,57 @@ const processLessonContent = async (content, subject, sessionId = null, messageI
         </div>`;
 
         processedContent = processedContent.replace(fullMatch, imageHtml);
-        console.log(`Successfully generated and stored diagram for: ${description}`);
+        console.log(`✅ Inserted diagram for: ${description}`);
       } else {
-        // Store failed attempt in database
+        // Error fallback
         if (sessionId && messageId) {
           try {
-            await storeImageInDatabase(
-              sessionId, 
-              messageId, 
-              description, 
-              null, 
-              subject, 
-              false, 
-              diagramResult.error
+            await storeImageInDatabaseFixed(
+              sessionId,
+              messageId,
+              description,
+              null,
+              subject,
+              false,
+              diagramResult.error,
+              connection
             );
           } catch (dbError) {
-            console.warn("Failed to store failed image attempt in database:", dbError);
+            console.warn("⚠ Fallback store error:", dbError);
           }
         }
 
-        // Enhanced fallback with better styling
         const fallbackHtml = `
         <div class="lesson-diagram-fallback" 
              style="margin: 20px 0; padding: 20px; background: #fff3cd; border: 2px solid #ffeaa7; border-radius: 12px; border-left: 6px solid #f39c12;"
-             data-description="${description.replace(/"/g, '&quot;')}"
+             data-description="${description.replace(/"/g, "&quot;")}"
              data-subject="${subject}">
           <h4 style="margin: 0 0 10px 0; color: #856404; font-size: 16px;">📊 ${description}</h4>
           <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ffeaa7;">
             <p style="margin: 0; font-weight: bold; color: #856404;">Key Points to Visualize:</p>
             <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
-              <li>Look for labeled parts A, B, C, D, E, F, G, H, I, J</li>
-              <li>Focus on the structural relationships</li>
-              <li>Note the biological/scientific processes shown</li>
+              <li>Look for labeled parts A–J</li>
+              <li>Focus on structure and relationships</li>
+              <li>Include visual aids like arrows/labels</li>
             </ul>
           </div>
           <p style="margin: 10px 0 0 0; font-size: 11px; color: #856404;">
-            *Diagram generation temporarily unavailable - Error: ${diagramResult.error}*
+            Diagram generation failed - Error: ${diagramResult.error}
           </p>
         </div>`;
 
         processedContent = processedContent.replace(fullMatch, fallbackHtml);
-        console.log(`Fallback used for: ${description} - ${diagramResult.error}`);
+        console.log(`⚠ Fallback used for: ${description}`);
       }
     }
 
     return processedContent;
   } catch (error) {
-    console.error("Error processing lesson content:", error);
-    return content; // Return original content if processing fails
+    console.error("🚨 Visual processing error:", error);
+    return content;
   }
 };
+
 
 // Check if database columns exist
 const checkDatabaseColumns = async (connection) => {
@@ -453,7 +505,7 @@ const initializeDatabase = async () => {
     `);
 
     // 6. Create lesson_data table with all columns including diagrams_generated
-   await connection.query(`
+    await connection.query(`
   CREATE TABLE IF NOT EXISTS lesson_data (
     id INT AUTO_INCREMENT PRIMARY KEY,
     session_id INT,
@@ -525,7 +577,6 @@ const initializeDatabase = async () => {
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 `);
 
-
     // Check if diagrams_generated column exists in lesson_data and add if missing
     const [lessonDataColumns] = await connection.query(`
       SELECT COLUMN_NAME 
@@ -582,24 +633,20 @@ initializeDatabase().catch(console.error);
 const startLesson = async (req, res) => {
   let connection;
   try {
-const {
-  student_id,
-  student_name,
-  subject,
-  exam_board,
-  tier,
-  lesson_topic_code,
-  lesson_topic,
-  messages = [],
-  student_previous_summary
-} = req.body;
+    const {
+      student_id,
+      student_name,
+      subject,
+      exam_board,
+      tier,
+      lesson_topic_code,
+      lesson_topic,
+      messages = [],
+      student_previous_summary,
+    } = req.body;
 
-let connection;
-connection = await pool.getConnection(); // ✅ moved here
-
-
-
-
+    // Get connection early and keep it throughout the function
+    connection = await pool.getConnection();
 
     // Basic validation
     if (
@@ -683,9 +730,6 @@ connection = await pool.getConnection(); // ✅ moved here
       });
     }
 
-    // Get database connection
-    connection = await pool.getConnection();
-
     // Check database columns availability
     const columnCheck = await checkDatabaseColumns(connection);
 
@@ -719,16 +763,15 @@ connection = await pool.getConnection(); // ✅ moved here
         if (latestMessage.content && latestMessage.content.trim().length > 0) {
           await connection.query(
             `INSERT INTO session_messages 
-             (session_id, role, content, timestamp, message_id,student_id) 
-             VALUES (?, ?, ?, ?, ? , ?)`,
+             (session_id, role, content, timestamp, message_id, student_id) 
+             VALUES (?, ?, ?, ?, ?, ?)`,
             [
               sessionId,
               latestMessage.role,
               latestMessage.content.trim(),
               latestMessage.timestamp || new Date().toISOString(),
               latestMessage.id || null,
-              student_id
-
+              student_id,
             ]
           );
           console.log(`Inserted 1 new message for session ${sessionId}`);
@@ -765,13 +808,13 @@ connection = await pool.getConnection(); // ✅ moved here
             msg.content.trim(),
             msg.timestamp || new Date().toISOString(),
             msg.id || null,
-            student_id
+            student_id,
           ]);
 
         if (messageValues.length > 0) {
           await connection.query(
             `INSERT INTO session_messages 
-             (session_id, role, content, timestamp, message_id,student_id) 
+             (session_id, role, content, timestamp, message_id, student_id) 
              VALUES ?`,
             [messageValues]
           );
@@ -780,39 +823,37 @@ connection = await pool.getConnection(); // ✅ moved here
       }
     }
 
-   const userLessonInput = {
-  student_id,
-  student_name,
-  subject: normalizedSubject,
-  exam_board,
-  tier,
-  lesson_topic_code,
-  lesson_topic,
-  lesson_start_time: new Date().toISOString(),
-student_previous_summary,
-};
-
+    const userLessonInput = {
+      student_id,
+      student_name,
+      subject: normalizedSubject,
+      exam_board,
+      tier,
+      lesson_topic_code,
+      lesson_topic,
+      lesson_start_time: new Date().toISOString(),
+      student_previous_summary,
+    };
 
     // Filter out any messages with empty/null content
-   // Instead of just taking the latest message, ensure all valid messages are included
-const validMessages = messages.filter(
-  (msg) => msg.content !== undefined && msg.content !== null // less strict filtering
-);
+    const validMessages = messages.filter(
+      (msg) => msg.content !== undefined && msg.content !== null
+    );
 
     const chatHistory = [
-  { role: "system", content: systemPrompt },
-  ...validMessages.map(msg => ({
-    role: msg.role,
-    content: msg.content
-  })),
-  { 
-    role: "user", 
-    content: JSON.stringify({
-      ...userLessonInput,
-      student_response: messages[messages.length - 1]?.content || ""
-    })
-  }
-];
+      { role: "system", content: systemPrompt },
+      ...validMessages.map((msg) => ({
+        role: msg.role,
+        content: msg.content,
+      })),
+      {
+        role: "user",
+        content: JSON.stringify({
+          ...userLessonInput,
+          student_response: messages[messages.length - 1]?.content || "",
+        }),
+      },
+    ];
 
     const payload = {
       model: "gpt-4.1",
@@ -844,11 +885,15 @@ const validMessages = messages.filter(
     if (assistantContent && assistantContent.includes("[CreateVisual:")) {
       console.log("Processing visual content...");
       hasVisuals = true;
+      
+      // CRITICAL FIX: Pass connection to processLessonContent or use pool
+      // Option 1: Modify processLessonContent to accept connection parameter
       processedContent = await processLessonContent(
         assistantContent,
         normalizedSubject,
         sessionId,
-        messageId
+        messageId,
+        connection // Pass the existing connection
       );
     }
 
@@ -865,15 +910,14 @@ const validMessages = messages.filter(
 
       // Build insert query dynamically based on available columns
       let insertQuery = `INSERT INTO session_messages (session_id, role, content, timestamp, message_id, student_id`;
-let insertValues = [
-  sessionId,
-  assistantMessage.role,
-  assistantMessage.content,
-  assistantMessage.timestamp,
-  assistantMessage.id,
-  student_id,
-];
-
+      let insertValues = [
+        sessionId,
+        assistantMessage.role,
+        assistantMessage.content,
+        assistantMessage.timestamp,
+        assistantMessage.id,
+        student_id,
+      ];
 
       if (columnCheck.hasProcessedContent) {
         insertQuery += `, processed_content`;
@@ -885,8 +929,7 @@ let insertValues = [
         insertValues.push(assistantMessage.has_visuals);
       }
 
-insertQuery += `) VALUES (?, ?, ?, ?, ?, ?`; 
-
+      insertQuery += `) VALUES (?, ?, ?, ?, ?, ?`;
 
       if (columnCheck.hasProcessedContent) insertQuery += `, ?`;
       if (columnCheck.hasVisuals) insertQuery += `, ?`;
@@ -903,7 +946,7 @@ insertQuery += `) VALUES (?, ?, ?, ?, ?, ?`;
           ...openaiResponse.data.choices[0],
           message: {
             ...openaiResponse.data.choices[0].message,
-            content: processedContent, // Send processed content with actual images
+            content: processedContent,
           },
         },
       ],
@@ -915,6 +958,7 @@ insertQuery += `) VALUES (?, ?, ?, ?, ?, ?`;
       sessionId: sessionId,
       hasVisuals: hasVisuals,
     });
+
   } catch (error) {
     console.error("Lesson Error:", error?.response?.data || error.message);
     res.status(500).json({
@@ -922,7 +966,10 @@ insertQuery += `) VALUES (?, ?, ?, ?, ?, ?`;
       error: error?.response?.data?.error?.message || "Internal Server Error",
     });
   } finally {
-    if (connection) connection.release();
+    // Always release the connection in the finally block
+    if (connection) {
+      connection.release();
+    }
   }
 };
 
@@ -1024,7 +1071,6 @@ const getLessonHistory = async (req, res) => {
   }
 };
 
-
 // Add function to save lesson data
 const saveLessonData = async (req, res) => {
   let connection;
@@ -1032,8 +1078,14 @@ const saveLessonData = async (req, res) => {
     const lessonData = req.body;
 
     // Validate required fields
-    if (!lessonData.student_id || !lessonData.student_name || !lessonData.subject) {
-      return res.status(400).json({ success: false, error: "Missing required fields" });
+    if (
+      !lessonData.student_id ||
+      !lessonData.student_name ||
+      !lessonData.subject
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Missing required fields" });
     }
 
     connection = await pool.getConnection();
@@ -1048,7 +1100,10 @@ const saveLessonData = async (req, res) => {
         );
         diagramCount = diagramResult[0].count;
       } catch (diagramError) {
-        console.warn("Could not count diagrams, setting to 0:", diagramError.message);
+        console.warn(
+          "Could not count diagrams, setting to 0:",
+          diagramError.message
+        );
       }
     }
 
@@ -1070,7 +1125,8 @@ const saveLessonData = async (req, res) => {
       lesson_duration_minutes: lessonData.lesson_duration_minutes || null,
       student_start_time: lessonData.student_start_time || null,
       student_end_time: lessonData.student_end_time || null,
-      student_total_duration_minutes: lessonData.student_total_duration_minutes || null,
+      student_total_duration_minutes:
+        lessonData.student_total_duration_minutes || null,
       designed_pacing_minutes: lessonData.designed_pacing_minutes || null,
       lesson_quality_score: lessonData.lesson_quality_score || null,
       student_engagement_score: lessonData.student_engagement_score || null,
@@ -1079,7 +1135,9 @@ const saveLessonData = async (req, res) => {
       quiz_score: lessonData.quiz_score || null,
       quiz_score_total: lessonData.quiz_score_total || null,
       quiz_score_percent: lessonData.quiz_score_percent || null,
-      quiz_question_topics: lessonData.quiz_question_topics ? JSON.stringify(lessonData.quiz_question_topics) : null,
+      quiz_question_topics: lessonData.quiz_question_topics
+        ? JSON.stringify(lessonData.quiz_question_topics)
+        : null,
       socratic_score: lessonData.socratic_score || null,
       socratic_score_reasoning: lessonData.socratic_score_reasoning || null,
       socratic_prompt: lessonData.socratic_prompt || null,
@@ -1094,25 +1152,27 @@ const saveLessonData = async (req, res) => {
       student_summary: lessonData.student_summary || null,
       estimated_tokens_used: lessonData.estimated_tokens_used || null,
       estimated_cost_usd: lessonData.estimated_cost_usd || null,
-      estimated_cost_usd_formatted: lessonData.estimated_cost_usd_formatted || null,
-      estimated_cost_gbp_formatted: lessonData.estimated_cost_gbp_formatted || null,
+      estimated_cost_usd_formatted:
+        lessonData.estimated_cost_usd_formatted || null,
+      estimated_cost_gbp_formatted:
+        lessonData.estimated_cost_gbp_formatted || null,
       cost_per_input_token_usd: lessonData.cost_per_input_token_usd || null,
       cost_per_output_token_usd: lessonData.cost_per_output_token_usd || null,
       cost_per_input_token_gbp: lessonData.cost_per_input_token_gbp || null,
       cost_per_output_token_gbp: lessonData.cost_per_output_token_gbp || null,
       full_chat_transcript: lessonData.full_chat_transcript || null,
-      diagrams_generated: diagramCount
+      diagrams_generated: diagramCount,
     };
 
     // Insert into DB
-    const [result] = await connection.query(
-      `INSERT INTO lesson_data SET ?`,
-      [insertData]
-    );
+    const [result] = await connection.query(`INSERT INTO lesson_data SET ?`, [
+      insertData,
+    ]);
 
     res.json({
       success: true,
       data: {
+        data: insertData,
         id: result.insertId,
         diagrams_generated: diagramCount,
       },
@@ -1127,10 +1187,6 @@ const saveLessonData = async (req, res) => {
     if (connection) connection.release();
   }
 };
-
-
-
-
 
 // Add endpoint to generate individual diagrams (for testing)
 const generateDiagramEndpoint = async (req, res) => {
