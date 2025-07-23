@@ -1,7 +1,6 @@
 const axios = require("axios");
 const mysql = require("mysql2/promise");
 
-// Create database connection pool (same as lesson controller)
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: process.env.DB_PORT,
@@ -13,7 +12,6 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
-// Helper: Extract and parse JSON from assistant response
 const extractJson = (text) => {
   const regex = /```json\s*([\s\S]*?)\s*```/;
   const match = text.match(regex);
@@ -25,7 +23,6 @@ const extractJson = (text) => {
     }
   }
 
-  // Fallback: try to extract JSON from first and last brace
   const firstBraceIndex = text.indexOf("{");
   const lastBraceIndex = text.lastIndexOf("}");
   if (firstBraceIndex !== -1 && lastBraceIndex !== -1) {
@@ -40,9 +37,8 @@ const extractJson = (text) => {
   return null;
 };
 
-// Mock test prompt (unchanged)
 const MOCK_TEST_PROMPT = `
-Do not wait for user input. If simulate_student_responses is true, simulate the entire session immediately, including teaching, quiz, and JSON export.
+
 
 You are Tutoh, an expert, energetic AI GCSE Maths tutor running a full timed mock exam session.
 
@@ -236,8 +232,7 @@ json
   "estimated_cost_usd": <float>,
   "estimated_cost_usd_formatted": "<string>",
   "estimated_cost_gbp_formatted": "<string>"
-}
-  
+} 
 `
 ;
 
@@ -250,13 +245,12 @@ const startMockTest = async (req, res) => {
       tier = "Higher",
       mock_cycle = 1,
       predicted_grade = "6",
-      student_type = "average",
-      error_rate_percent = 20,
-      simulate_student_responses = true,
-      messages = [] // Added to match lesson controller pattern
+      is_continuation = false,
+      chat_history = [],
+      student_response = null,
+      current_question = null
     } = req.body;
 
-    // Basic validation - similar to lesson controller but for mock test
     if (!student_id || !student_name) {
       return res.status(400).json({
         success: false,
@@ -264,7 +258,6 @@ const startMockTest = async (req, res) => {
       });
     }
 
-    // Validate exam board
     const supportedBoards = ["AQA", "Edexcel", "OCR"];
     if (!supportedBoards.includes(exam_board)) {
       return res.status(400).json({
@@ -273,7 +266,6 @@ const startMockTest = async (req, res) => {
       });
     }
 
-    // Validate tier
     const validTiers = ["Foundation", "Higher"];
     if (!validTiers.includes(tier)) {
       return res.status(400).json({
@@ -282,39 +274,45 @@ const startMockTest = async (req, res) => {
       });
     }
 
-    // Prepare user input for AI - similar structure to lesson controller
-    const mockTestInput = {
-      student_id,
-      student_name,
-      subject: "GCSE Mathematics",
-      exam_board,
-      tier,
-      mock_cycle,
-      predicted_grade,
-      student_type,
-      error_rate_percent,
-      simulate_student_responses
-    };
+    // Prepare chat history based on whether this is a continuation
+    let chatHistory = [];
+    
+    if (is_continuation) {
+      // For continuation, use the provided chat history and add the student response
+      chatHistory = [...chat_history];
+      
+      if (student_response && current_question) {
+        chatHistory.push({
+          role: "user",
+          content: `Student Response to Question ${current_question}: ${student_response}`
+        });
+      }
+    } else {
+      // Initial request - start with system prompt and initial input
+      const mockTestInput = {
+        subject: "GCSE Mathematics",
+        tier,
+        exam_board,
+        mock_cycle,
+        predicted_grade
+      };
 
-    // Build chat history like lesson controller does
-    const chatHistory = [
-      { role: "system", content: MOCK_TEST_PROMPT },
-      ...messages.filter(msg => msg.content && msg.content.trim().length > 0),
-      { role: "user", content: JSON.stringify(mockTestInput) }
-    ];
+      chatHistory = [
+        { role: "system", content: MOCK_TEST_PROMPT },
+        { role: "user", content: JSON.stringify(mockTestInput) }
+      ];
+    }
 
-    // OpenAI configuration - using gpt-4o like lesson controller
     const payload = {
-      model: "gpt-4o", // Updated to match lesson controller
+      model: "gpt-4.1",
       messages: chatHistory,
-      temperature: 0.7, // Adjusted to match lesson controller
+      temperature: 1,
       max_tokens: 4096,
       top_p: 1,
       frequency_penalty: 0,
       presence_penalty: 0
     };
 
-    // Call OpenAI API - same pattern as lesson controller
     const openaiResponse = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       payload,
@@ -326,22 +324,28 @@ const startMockTest = async (req, res) => {
       }
     );
 
-    // Extract assistant reply
     const assistantResponse = openaiResponse.data.choices[0].message.content;
-
-    // Parse JSON output robustly
     const jsonOutput = extractJson(assistantResponse) || {
       note: "Could not parse JSON from response",
       raw_response: assistantResponse
     };
 
-    // Respond with similar structure to lesson controller
+    // If this is a continuation, include the full chat history in the response
+    if (is_continuation) {
+      chatHistory.push({
+        role: "assistant",
+        content: assistantResponse
+      });
+    }
+
     res.json({
       success: true,
       data: {
         ...jsonOutput,
-        full_chat_transcript: assistantResponse,
-        // Include these additional fields to match lesson controller pattern
+        chat_history: is_continuation ? chatHistory : [
+          ...chatHistory,
+          { role: "assistant", content: assistantResponse }
+        ],
         openai_response: openaiResponse.data,
         session_data: {
           student_id,
@@ -363,17 +367,6 @@ const startMockTest = async (req, res) => {
   }
 };
 
-// Add this to match lesson controller pattern, even if we're not using DB yet
-const getMockTestHistory = async (req, res) => {
-  // For now just return empty since we're not storing data
-  res.json({
-    success: true,
-    data: [],
-    note: "Mock test history storage not yet implemented"
-  });
-};
-
 module.exports = {
   startMockTest,
-  getMockTestHistory // Added to match lesson controller pattern
 };
