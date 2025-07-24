@@ -13,21 +13,22 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
-// API endpoint for fetching prompts
+
 const PROMPT_API_URL = "https://thinkdream.in/GCSE/api/get-prompt/";
 
 // Function to fetch prompt from API
-const fetchPromptFromAPI = async (subject) => {
+const fetchPromptFromAPI = async (subject, type) => {
   try {
     const encodedSubject = encodeURIComponent(subject);
-    const response = await axios.get(`${PROMPT_API_URL}${encodedSubject}`);
+    const encodedType = encodeURIComponent(type);
+    const response = await axios.get(`${PROMPT_API_URL}${encodedSubject}/${encodedType}`);
 
     if (response.data.success && response.data.data?.prompt) {
       return response.data.data.prompt;
     }
-    throw new Error(`No prompt found for subject: ${subject}`);
+    throw new Error(`No prompt found for subject: ${subject} and type: ${type}`);
   } catch (error) {
-    console.error(`Error fetching prompt for ${subject}:`, error.message);
+    console.error(`Error fetching prompt for ${subject} (${type}):`, error.message);
     throw error;
   }
 };
@@ -643,6 +644,7 @@ const startLesson = async (req, res) => {
       lesson_topic,
       messages = [],
       student_previous_summary,
+      type
     } = req.body;
 
     // Get connection early and keep it throughout the function
@@ -669,66 +671,24 @@ const startLesson = async (req, res) => {
       lesson_topic,
     });
 
-    // Normalize subject
-    const normalizedSubject = subject.trim().toLowerCase();
-    console.log(
-      `Received subject: ${subject}, normalized: ${normalizedSubject}`
-    );
+ // Normalize subject
+const normalizedSubject = subject.trim().toLowerCase();
+console.log(`Received subject: ${subject}, normalized: ${normalizedSubject}`);
 
-    // Handle different subject name variations
-    let apiSubjectName;
-    switch (normalizedSubject) {
-      case "maths":
-      case "mathematics":
-        apiSubjectName = "Mathematics";
-        break;
-      case "english language":
-        apiSubjectName = "English Language";
-        break;
-      case "english literature":
-        apiSubjectName = "English Literature";
-        break;
-      case "biology":
-        apiSubjectName = "Biology";
-        break;
-      case "combined science":
-        apiSubjectName = "Combined Science";
-        break;
-      default:
-        return res.status(400).json({
-          success: false,
-          error: `Unsupported subject: ${subject}`,
-        });
-    }
+// Use original subject directly to fetch prompt dynamically
+let systemPrompt;
+try {
+  const promptType = type?.trim() || "lesson";
+  systemPrompt = await fetchPromptFromAPI(subject.trim(), promptType);
+  console.log("Successfully fetched prompt from API for type:", promptType);
+} catch (error) {
+  console.error("Error fetching prompt from API:", error);
+  return res.status(500).json({
+    success: false,
+    error: `Failed to fetch prompt for subject: ${subject} and type: ${type}`,
+  });
+}
 
-    // Verify exam board is supported for this subject
-    const examBoards = {
-      Mathematics: ["Edexcel"],
-      "English Language": ["AQA"],
-      Biology: ["AQA"],
-      "Combined Science": ["AQA"],
-      "English Literature": ["AQA", "Edexcel", "OCR"],
-    };
-
-    if (!examBoards[apiSubjectName].includes(exam_board.trim())) {
-      return res.status(400).json({
-        success: false,
-        error: `Exam board ${exam_board} not supported for ${subject}`,
-      });
-    }
-
-    // Get the appropriate prompt from API
-    let systemPrompt;
-    try {
-      systemPrompt = await fetchPromptFromAPI(apiSubjectName);
-      console.log("Successfully fetched prompt from API");
-    } catch (error) {
-      console.error("Error fetching prompt from API:", error);
-      return res.status(500).json({
-        success: false,
-        error: `Failed to fetch prompt for subject: ${subject}`,
-      });
-    }
 
     // Check database columns availability
     const columnCheck = await checkDatabaseColumns(connection);
