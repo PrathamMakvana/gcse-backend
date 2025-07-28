@@ -264,7 +264,7 @@ const processLessonContent = async (
     console.log("📜 Subject received:", subject);
 
     const inlinePattern = /\[CreateVisual:\s*["'](.+?)["']\]/g;
-    const blockPattern = /CreateVisual:\s*([\s\S]+?)(?=\n\n|$)/gi; // Multiline block until double newline or end
+    const blockPattern = /CreateVisual:\s*([\s\S]+?)(?=\n\n|$)/gi;
 
     let processedContent = content;
     const allMatches = [];
@@ -272,19 +272,15 @@ const processLessonContent = async (
     console.log("🔍 Starting visual processing...");
     console.log(`📝 Original subject: ${subject}`);
 
-    console.log("🔍 Checking for inline [CreateVisual] matches...");
-    console.log("Inline pattern:", inlinePattern);
-    console.log("Content snippet (first 300 chars):", content.slice(0, 300));
-
     // 1. Match inline prompts like [CreateVisual: "Draw a plant cell"]
     for (const match of content.matchAll(inlinePattern)) {
       let description = match[1].trim();
-      description = description.replace(/\s+/g, " "); // sanitize to single line
+      description = description.replace(/\s+/g, " ");
 
       allMatches.push({
         fullMatch: match[0],
         description,
-        subject, // use default subject
+        subject,
       });
 
       console.log(`✅ Found inline visual: "${description}"`);
@@ -294,7 +290,6 @@ const processLessonContent = async (
     for (const match of content.matchAll(blockPattern)) {
       const block = match[1].trim();
 
-      // Extract key fields
       const subjectMatch = block.match(/Subject:\s*{?([^};\n]+)}?/i);
       const topicMatch = block.match(/Topic:\s*{?([^};\n]+)}?/i);
       const focusMatch = block.match(/Focus:\s*{?([^};\n]+)}?/i);
@@ -308,7 +303,7 @@ const processLessonContent = async (
       let subjectOverride = subjectMatch ? subjectMatch[1].trim() : null;
 
       if (description) {
-        description = description.replace(/\s+/g, " "); // sanitize to single line
+        description = description.replace(/\s+/g, " ");
 
         const finalSubject = subjectOverride || subject;
 
@@ -389,45 +384,6 @@ const processLessonContent = async (
 
         processedContent = processedContent.replace(fullMatch, imageHtml);
         console.log(`✅ Inserted diagram for: ${description}`);
-      } else {
-        // Error fallback
-        if (sessionId && messageId) {
-          try {
-            await storeImageInDatabaseFixed(
-              sessionId,
-              messageId,
-              description,
-              null,
-              effectiveSubject,
-              false,
-              diagramResult.error
-            );
-          } catch (dbError) {
-            console.warn("⚠ Fallback store error:", dbError);
-          }
-        }
-
-        // const fallbackHtml = `
-        // <div class="lesson-diagram-fallback" 
-        //      style="margin: 20px 0; padding: 20px; background: #fff3cd; border: 2px solid #ffeaa7; border-radius: 12px; border-left: 6px solid #f39c12;"
-        //      data-description="${description.replace(/"/g, "&quot;")}"
-        //      data-subject="${effectiveSubject}">
-        //   <h4 style="margin: 0 0 10px 0; color: #856404; font-size: 16px;">📊 ${description}</h4>
-        //   <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ffeaa7;">
-        //     <p style="margin: 0; font-weight: bold; color: #856404;">Key Points to Visualize:</p>
-        //     <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
-        //       <li>Look for labeled parts A–J</li>
-        //       <li>Focus on structure and relationships</li>
-        //       <li>Include visual aids like arrows/labels</li>
-        //     </ul>
-        //   </div>
-        //   <p style="margin: 10px 0 0 0; font-size: 11px; color: #856404;">
-        //     Diagram generation failed - Error: ${diagramResult.error}
-        //   </p>
-        // </div>`;
-
-        // processedContent = processedContent.replace(fullMatch, fallbackHtml);
-        // console.log(`⚠ Fallback used for: ${description}`);
       }
     }
 
@@ -437,6 +393,7 @@ const processLessonContent = async (
     return content;
   }
 };
+
 
 // Check if database columns exist
 const checkDatabaseColumns = async (connection) => {
