@@ -13,7 +13,6 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
-
 const PROMPT_API_URL = "https://thinkdream.in/GCSE/api/get-prompt/";
 
 // Function to fetch prompt from API
@@ -21,14 +20,21 @@ const fetchPromptFromAPI = async (subject, type) => {
   try {
     const encodedSubject = encodeURIComponent(subject);
     const encodedType = encodeURIComponent(type);
-    const response = await axios.get(`${PROMPT_API_URL}${encodedSubject}/${encodedType}`);
+    const response = await axios.get(
+      `${PROMPT_API_URL}${encodedSubject}/${encodedType}`
+    );
 
     if (response.data.success && response.data.data?.prompt) {
       return response.data.data.prompt;
     }
-    throw new Error(`No prompt found for subject: ${subject} and type: ${type}`);
+    throw new Error(
+      `No prompt found for subject: ${subject} and type: ${type}`
+    );
   } catch (error) {
-    console.error(`Error fetching prompt for ${subject} (${type}):`, error.message);
+    console.error(
+      `Error fetching prompt for ${subject} (${type}):`,
+      error.message
+    );
     throw error;
   }
 };
@@ -207,7 +213,7 @@ const storeImageInDatabase = async (
   connection = null // Accept connection parameter
 ) => {
   let shouldReleaseConnection = false;
-  
+
   try {
     // Use provided connection or get new one
     if (!connection) {
@@ -253,44 +259,94 @@ const processLessonContent = async (
   connection = null
 ) => {
   try {
+    console.log("🔥 processLessonContent CALLED");
+    console.log("📏 Content length:", content?.length);
+    console.log("📜 Subject received:", subject);
+
     const inlinePattern = /\[CreateVisual:\s*["'](.+?)["']\]/g;
-    const blockPattern = /CreateVisual:\s*([^]+)/gi;
+    const blockPattern = /CreateVisual:\s*([\s\S]+?)(?=\n\n|$)/gi; // Multiline block until double newline or end
 
     let processedContent = content;
     const allMatches = [];
 
+    console.log("🔍 Starting visual processing...");
+    console.log(`📝 Original subject: ${subject}`);
+
+    console.log("🔍 Checking for inline [CreateVisual] matches...");
+    console.log("Inline pattern:", inlinePattern);
+    console.log("Content snippet (first 300 chars):", content.slice(0, 300));
+
     // 1. Match inline prompts like [CreateVisual: "Draw a plant cell"]
     for (const match of content.matchAll(inlinePattern)) {
+      let description = match[1].trim();
+      description = description.replace(/\s+/g, " "); // sanitize to single line
+
       allMatches.push({
         fullMatch: match[0],
-        description: match[1].trim(),
+        description,
+        subject, // use default subject
       });
+
+      console.log(`✅ Found inline visual: "${description}"`);
     }
 
-    // 2. Match block prompts (multiline)
+    // 2. Match block prompts (multiline structured format)
     for (const match of content.matchAll(blockPattern)) {
-      const block = match[0].trim();
-      const focusMatch = block.match(/Focus:\s*(.+)/i);
-      const description = focusMatch ? focusMatch[1].trim() : null;
+      const block = match[1].trim();
+
+      // Extract key fields
+      const subjectMatch = block.match(/Subject:\s*{?([^};\n]+)}?/i);
+      const topicMatch = block.match(/Topic:\s*{?([^};\n]+)}?/i);
+      const focusMatch = block.match(/Focus:\s*{?([^};\n]+)}?/i);
+
+      let description = focusMatch
+        ? focusMatch[1].trim()
+        : topicMatch
+        ? topicMatch[1].trim()
+        : null;
+
+      let subjectOverride = subjectMatch ? subjectMatch[1].trim() : null;
 
       if (description) {
+        description = description.replace(/\s+/g, " "); // sanitize to single line
+
+        const finalSubject = subjectOverride || subject;
+
         allMatches.push({
-          fullMatch: block,
+          fullMatch: match[0],
           description,
+          subject: finalSubject,
         });
+
+        console.log(
+          `🧾 Parsed block visual: Subject="${finalSubject}", Description="${description}"`
+        );
+      } else {
+        console.warn(`⚠ No valid Focus/Topic found in block: ${block}`);
       }
     }
 
-    console.log(`🧪 Found ${allMatches.length} visual requests in lesson content`);
+    console.log(`🧪 Total visuals to generate: ${allMatches.length}`);
 
     // 3. Process each visual request
-    for (const { fullMatch, description } of allMatches) {
-      console.log(`🎯 Generating diagram for: ${description}`);
+    for (const {
+      fullMatch,
+      description,
+      subject: effectiveSubject,
+    } of allMatches) {
+      console.log(
+        `🎯 Generating diagram for: "${description}" [Subject: ${effectiveSubject}]`
+      );
 
-      const diagramResult = await generateDiagram(description, subject);
+      const diagramResult = await generateDiagram(
+        description,
+        effectiveSubject
+      );
 
       if (diagramResult.success) {
         let diagramId = null;
+
+        // Save to DB if session info is provided
         if (sessionId && messageId) {
           try {
             diagramId = await storeImageInDatabase(
@@ -298,10 +354,9 @@ const processLessonContent = async (
               messageId,
               description,
               diagramResult.imageUrl,
-              subject,
+              effectiveSubject,
               true,
-              null,
-              connection
+              null
             );
           } catch (dbError) {
             console.warn("⚠ DB Store Error:", dbError);
@@ -313,7 +368,7 @@ const processLessonContent = async (
              style="margin: 20px 0; text-align: center; border: 2px solid #e0e0e0; border-radius: 12px; padding: 15px; background: #f9f9f9;" 
              data-diagram-id="${diagramId}" 
              data-description="${description.replace(/"/g, "&quot;")}"
-             data-subject="${subject}">
+             data-subject="${effectiveSubject}">
           <h4 style="color: #333; margin-bottom: 10px; font-size: 16px;">${description}</h4>
           <img src="${diagramResult.imageUrl}" 
                alt="Educational diagram: ${description}" 
@@ -324,7 +379,10 @@ const processLessonContent = async (
             <p style="margin: 5px 0 0 0; font-size: 12px;">Image could not be loaded</p>
           </div>
           <p style="font-style: italic; color: #666; margin-top: 10px; font-size: 12px;">
-            Subject: ${subject.charAt(0).toUpperCase() + subject.slice(1)} | 
+            Subject: ${
+              effectiveSubject.charAt(0).toUpperCase() +
+              effectiveSubject.slice(1)
+            } | 
             Labels: A, B, C, D, E, F, G, H, I, J (as applicable)
           </p>
         </div>`;
@@ -340,10 +398,9 @@ const processLessonContent = async (
               messageId,
               description,
               null,
-              subject,
+              effectiveSubject,
               false,
-              diagramResult.error,
-              connection
+              diagramResult.error
             );
           } catch (dbError) {
             console.warn("⚠ Fallback store error:", dbError);
@@ -354,7 +411,7 @@ const processLessonContent = async (
         <div class="lesson-diagram-fallback" 
              style="margin: 20px 0; padding: 20px; background: #fff3cd; border: 2px solid #ffeaa7; border-radius: 12px; border-left: 6px solid #f39c12;"
              data-description="${description.replace(/"/g, "&quot;")}"
-             data-subject="${subject}">
+             data-subject="${effectiveSubject}">
           <h4 style="margin: 0 0 10px 0; color: #856404; font-size: 16px;">📊 ${description}</h4>
           <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ffeaa7;">
             <p style="margin: 0; font-weight: bold; color: #856404;">Key Points to Visualize:</p>
@@ -380,7 +437,6 @@ const processLessonContent = async (
     return content;
   }
 };
-
 
 // Check if database columns exist
 const checkDatabaseColumns = async (connection) => {
@@ -644,7 +700,7 @@ const startLesson = async (req, res) => {
       lesson_topic,
       messages = [],
       student_previous_summary,
-      type
+      type,
     } = req.body;
 
     // Get connection early and keep it throughout the function
@@ -671,24 +727,25 @@ const startLesson = async (req, res) => {
       lesson_topic,
     });
 
- // Normalize subject
-const normalizedSubject = subject.trim().toLowerCase();
-console.log(`Received subject: ${subject}, normalized: ${normalizedSubject}`);
+    // Normalize subject
+    const normalizedSubject = subject.trim().toLowerCase();
+    console.log(
+      `Received subject: ${subject}, normalized: ${normalizedSubject}`
+    );
 
-// Use original subject directly to fetch prompt dynamically
-let systemPrompt;
-try {
-  const promptType = type?.trim() || "lesson";
-  systemPrompt = await fetchPromptFromAPI(subject.trim(), promptType);
-  console.log("Successfully fetched prompt from API for type:", promptType);
-} catch (error) {
-  console.error("Error fetching prompt from API:", error);
-  return res.status(500).json({
-    success: false,
-    error: `Failed to fetch prompt for subject: ${subject} and type: ${type}`,
-  });
-}
-
+    // Use original subject directly to fetch prompt dynamically
+    let systemPrompt;
+    try {
+      const promptType = type?.trim() || "lesson";
+      systemPrompt = await fetchPromptFromAPI(subject.trim(), promptType);
+      console.log("Successfully fetched prompt from API for type:", promptType);
+    } catch (error) {
+      console.error("Error fetching prompt from API:", error);
+      return res.status(500).json({
+        success: false,
+        error: `Failed to fetch prompt for subject: ${subject} and type: ${type}`,
+      });
+    }
 
     // Check database columns availability
     const columnCheck = await checkDatabaseColumns(connection);
@@ -842,10 +899,14 @@ try {
     const messageId = Date.now().toString();
 
     // Check if the response contains visual requests and process them
-    if (assistantContent && assistantContent.includes("[CreateVisual:")) {
+    if (
+      assistantContent &&
+      (assistantContent.includes("[CreateVisual:") ||
+        assistantContent.includes("CreateVisual:"))
+    ) {
       console.log("Processing visual content...");
       hasVisuals = true;
-      
+
       // CRITICAL FIX: Pass connection to processLessonContent or use pool
       // Option 1: Modify processLessonContent to accept connection parameter
       processedContent = await processLessonContent(
@@ -918,7 +979,6 @@ try {
       sessionId: sessionId,
       hasVisuals: hasVisuals,
     });
-
   } catch (error) {
     console.error("Lesson Error:", error?.response?.data || error.message);
     res.status(500).json({
