@@ -407,27 +407,27 @@ const processLessonContent = async (
           }
         }
 
-        const fallbackHtml = `
-        <div class="lesson-diagram-fallback" 
-             style="margin: 20px 0; padding: 20px; background: #fff3cd; border: 2px solid #ffeaa7; border-radius: 12px; border-left: 6px solid #f39c12;"
-             data-description="${description.replace(/"/g, "&quot;")}"
-             data-subject="${effectiveSubject}">
-          <h4 style="margin: 0 0 10px 0; color: #856404; font-size: 16px;">📊 ${description}</h4>
-          <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ffeaa7;">
-            <p style="margin: 0; font-weight: bold; color: #856404;">Key Points to Visualize:</p>
-            <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
-              <li>Look for labeled parts A–J</li>
-              <li>Focus on structure and relationships</li>
-              <li>Include visual aids like arrows/labels</li>
-            </ul>
-          </div>
-          <p style="margin: 10px 0 0 0; font-size: 11px; color: #856404;">
-            Diagram generation failed - Error: ${diagramResult.error}
-          </p>
-        </div>`;
+        // const fallbackHtml = `
+        // <div class="lesson-diagram-fallback" 
+        //      style="margin: 20px 0; padding: 20px; background: #fff3cd; border: 2px solid #ffeaa7; border-radius: 12px; border-left: 6px solid #f39c12;"
+        //      data-description="${description.replace(/"/g, "&quot;")}"
+        //      data-subject="${effectiveSubject}">
+        //   <h4 style="margin: 0 0 10px 0; color: #856404; font-size: 16px;">📊 ${description}</h4>
+        //   <div style="background: white; padding: 15px; border-radius: 8px; border: 1px solid #ffeaa7;">
+        //     <p style="margin: 0; font-weight: bold; color: #856404;">Key Points to Visualize:</p>
+        //     <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
+        //       <li>Look for labeled parts A–J</li>
+        //       <li>Focus on structure and relationships</li>
+        //       <li>Include visual aids like arrows/labels</li>
+        //     </ul>
+        //   </div>
+        //   <p style="margin: 10px 0 0 0; font-size: 11px; color: #856404;">
+        //     Diagram generation failed - Error: ${diagramResult.error}
+        //   </p>
+        // </div>`;
 
-        processedContent = processedContent.replace(fullMatch, fallbackHtml);
-        console.log(`⚠ Fallback used for: ${description}`);
+        // processedContent = processedContent.replace(fullMatch, fallbackHtml);
+        // console.log(`⚠ Fallback used for: ${description}`);
       }
     }
 
