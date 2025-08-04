@@ -24,18 +24,22 @@ connection.connect((err) => {
   } else {
     console.log('✅ Connected to MySQL database!');
   }
-})
+});
+
+// ✅ Add a default route for confirmation
+app.get('/', (req, res) => {
+  res.send('✅ Server is running and API is live!');
+});
 
 // Routes
 const lessonRoutes = require('./routes/lessonRoutes');
-const mockRoutes = require('./routes/mockRoutes')
+const mockRoutes = require('./routes/mockRoutes');
 
 app.use('/api/lesson', lessonRoutes);
 app.use('/api/mock', mockRoutes);
 
-
 // Server
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 9000;
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
 });
