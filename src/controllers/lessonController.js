@@ -1,7 +1,14 @@
 const axios = require("axios");
 const mysql = require("mysql2/promise");
+const path = require("path");
+const { VertexAI } = require("@google-cloud/vertexai");
+const fs = require("fs/promises");
+const Replicate = require("replicate");
 
-// Create database connection pool
+// ✅ Set Google Cloud credentials
+// process.env.GOOGLE_APPLICATION_CREDENTIALS = path.resolve(__dirname, "../../vertex-key.json");
+
+// ✅ Create MySQL pool
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
   port: process.env.DB_PORT,
@@ -13,195 +20,220 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
+// ✅ Prompt API
 const PROMPT_API_URL = "https://thinkdream.in/GCSE/api/get-prompt/";
 
-// Function to fetch prompt from API
 const fetchPromptFromAPI = async (subject, type) => {
   try {
-    const encodedSubject = encodeURIComponent(subject);
-    const encodedType = encodeURIComponent(type);
     const response = await axios.get(
-      `${PROMPT_API_URL}${encodedSubject}/${encodedType}`
+      `${PROMPT_API_URL}${encodeURIComponent(subject)}/${encodeURIComponent(
+        type
+      )}`
     );
 
     if (response.data.success && response.data.data?.prompt) {
       return response.data.data.prompt;
+    } else {
+      throw new Error(
+        `Prompt not found for subject "${subject}" and type "${type}"`
+      );
     }
-    throw new Error(
-      `No prompt found for subject: ${subject} and type: ${type}`
-    );
   } catch (error) {
-    console.error(
-      `Error fetching prompt for ${subject} (${type}):`,
-      error.message
-    );
+    console.error(`❌ Error fetching prompt:`, error.message);
     throw error;
   }
 };
 
-// Enhanced DALL-E Image Generation Function with better labeling
-const generateDiagram = async (description, subject = "biology") => {
+// // ✅ Google Cloud settings
+// const PROJECT_ID = "dreams-review-api";
+// const LOCATION = "us-central1";
+
+// // ✅ Create Vertex AI client
+// const vertexAI = new VertexAI({
+//   project: PROJECT_ID,
+//   location: LOCATION,
+// });
+
+// // ✅ Generate diagram using Imagen-4
+// const generateDiagram = async (description) => {
+//   try {
+//    const model = vertexAI.getGenerativeModel({
+//   model: "imagegeneration@002",  // ✅ This maps to Imagen 2
+//   publisher: "google",
+// });
+
+//     const request = {
+//       contents: [
+//         {
+//           role: "user",
+//           parts: [{ text: description }],
+//         },
+//       ],
+//     };
+
+//     const result = await model.generateContent(request);
+
+//     const imagePart = result.response.candidates?.[0]?.content?.parts?.find(
+//       (part) => part.inlineData?.mimeType === "image/png"
+//     );
+
+//     if (!imagePart) {
+//       throw new Error("❌ No image returned from Imagen-4.");
+//     }
+
+//     const buffer = Buffer.from(imagePart.inlineData.data, "base64");
+//     const outputDir = path.resolve(__dirname, "../outputs");
+
+//     if (!fs.existsSync(outputDir)) {
+//       fs.mkdirSync(outputDir, { recursive: true });
+//     }
+
+//     const outputPath = path.join(outputDir, `image-${Date.now()}.png`);
+//     fs.writeFileSync(outputPath, buffer);
+
+//     console.log("✅ Image saved at", outputPath);
+
+//     return {
+//       success: true,
+//       filePath: outputPath,
+//       originalDescription: description,
+//     };
+//   } catch (error) {
+//     console.error("❌ Vertex AI (Imagen-4) Error:", error.message);
+//     return {
+//       success: false,
+//       error: error.message,
+//       originalDescription: description,
+//     };
+//   }
+// };
+
+const fetch =
+  global.fetch ||
+  ((...args) =>
+    import("node-fetch").then(({ default: fetch }) => fetch(...args)));
+
+const replicate = new Replicate({
+  auth: process.env.REPLICATE_API_TOKEN,
+});
+
+// Ensure outputs directory exists
+const ensureOutputDir = async (dir = "./outputs") => {
   try {
-    // Enhanced prompts with specific labeling instructions
-    const subjectPrompts = {
-      biology: `
-Create a high-quality, educational biology diagram of "${description}". 
-CRITICAL REQUIREMENTS:
-- Use LARGE, BOLD, BLACK text for all labels
-- Place labels OUTSIDE the diagram with clear arrows pointing to structures
-- Use sequential labels: A, B, C, D, E, F, G, H, I, J (in that order)
-- Each label must be at least 16px font size and highly visible
-- Labels should be positioned to avoid overlapping
-- Use straight, thick black arrows from labels to structures
-- White background with high contrast
-- Professional scientific illustration style
-- All biological terminology must be spelled correctly
-- Include a title at the top of the diagram
+    await fs.mkdir(dir, { recursive: true });
+    console.log("📁 Output directory ready:", dir);
+  } catch (e) {
+    console.error("❌ Could not create output directory:", e.message);
+  }
+};
 
-Example labeling format:
-A → [Structure name]
-B → [Structure name]
-C → [Structure name]
+// Sanitize filenames for Windows/Linux
+const sanitizeFilename = (name) => {
+  return name.replace(/[<>:"/\\|?*\n\r\t]/g, "_").slice(0, 150);
+};
 
-Make sure every major structure has a clear, readable label with proper arrows.
-`,
-      chemistry: `
-Create a clear, educational chemistry diagram of "${description}". 
-CRITICAL REQUIREMENTS:
-- Use LARGE, BOLD, BLACK text for all labels (minimum 16px)
-- Place labels OUTSIDE the diagram with clear arrows
-- Use sequential labels: A, B, C, D, E, F, G, H, I, J
-- Show molecular structures, bonds, and reactions clearly
-- White background with high contrast
-- Professional scientific illustration style
-- Include proper chemical symbols and formulas
-- Title at the top of the diagram
-`,
-      physics: `
-Create a clear, educational physics diagram of "${description}". 
-CRITICAL REQUIREMENTS:
-- Use LARGE, BOLD, BLACK text for all labels (minimum 16px)
-- Place labels OUTSIDE the diagram with clear arrows
-- Use sequential labels: A, B, C, D, E, F, G, H, I, J
-- Show measurements, forces, and physical principles clearly
-- White background with high contrast
-- Professional scientific illustration style
-- Include proper units and symbols
-- Title at the top of the diagram
-`,
-      mathematics: `
-Create a clear, educational mathematics diagram of "${description}". 
-CRITICAL REQUIREMENTS:
-- Use LARGE, BOLD, BLACK text for all labels (minimum 16px)
-- Place labels OUTSIDE the diagram with clear arrows
-- Use sequential labels: A, B, C, D, E, F, G, H, I, J
-- Show geometric shapes, coordinate systems clearly
-- White background with high contrast
-- Professional mathematical illustration style
-- Include proper mathematical notation
-- Title at the top of the diagram
-`,
-      maths: `
-Create a clear, educational mathematics diagram of "${description}". 
-CRITICAL REQUIREMENTS:
-- Use LARGE, BOLD, BLACK text for all labels (minimum 16px)
-- Place labels OUTSIDE the diagram with clear arrows
-- Use sequential labels: A, B, C, D, E, F, G, H, I, J
-- Show geometric shapes, coordinate systems clearly
-- White background with high contrast
-- Professional mathematical illustration style
-- Include proper mathematical notation
-- Title at the top of the diagram
-`,
-      "english language": `
-Create a clear, structured diagram of "${description}". 
-CRITICAL REQUIREMENTS:
-- Use LARGE, BOLD, BLACK text for all labels (minimum 16px)
-- Place labels clearly with connecting lines
-- Use sequential labels: A, B, C, D, E, F, G, H, I, J
-- Show language structures and relationships
-- White background with high contrast
-- Professional educational illustration style
-- Title at the top of the diagram
-`,
-      "english literature": `
-Create a clear, structured diagram of "${description}". 
-CRITICAL REQUIREMENTS:
-- Use LARGE, BOLD, BLACK text for all labels (minimum 16px)
-- Place labels clearly with connecting lines
-- Use sequential labels: A, B, C, D, E, F, G, H, I, J
-- Show literary relationships and themes
-- White background with high contrast
-- Professional educational illustration style
-- Title at the top of the diagram
-`,
-      "combined science": `
-Create a clear, educational combined science diagram of "${description}". 
-CRITICAL REQUIREMENTS:
-- Use LARGE, BOLD, BLACK text for all labels (minimum 16px)
-- Place labels OUTSIDE the diagram with clear arrows
-- Use sequential labels: A, B, C, D, E, F, G, H, I, J
-- Show scientific concepts clearly
-- White background with high contrast
-- Professional scientific illustration style
-- Include proper scientific terminology
-- Title at the top of the diagram
-`,
-      default: `
-Create a clear educational diagram of "${description}". 
-CRITICAL REQUIREMENTS:
-- Use LARGE, BOLD, BLACK text for all labels (minimum 16px)
-- Place labels OUTSIDE the diagram with clear arrows
-- Use sequential labels: A, B, C, D, E, F, G, H, I, J
-- White background with high contrast
-- Professional educational illustration style
-- Title at the top of the diagram
-`,
+const generateDiagram = async (description, imageName = "") => {
+  try {
+    if (!description || description.trim().length === 0) {
+      throw new Error("❌ Description is required to generate a diagram");
+    }
+
+    console.log("🧠 Generating with prompt:", description);
+
+    const input = {
+      prompt: description,
+      aspect_ratio: "3:2",
+      output_format: "webp",
+      output_quality: 80,
+      safety_tolerance: 2,
+      prompt_upsampling: true,
     };
 
-    const basePrompt = subjectPrompts[subject.toLowerCase()] || subjectPrompts.default;
-const enhancedPrompt = basePrompt.replace(/"\${description}"/g, "${description}");
+    console.log("📥 Input payload:", JSON.stringify(input, null, 2));
 
-    const response = await axios.post(
-      "https://api.openai.com/v1/images/generations",
-      {
-        model: "dall-e-3",
-        prompt: enhancedPrompt,
-        n: 1,
-        size: "1024x1024",
-        quality: "hd", 
-        style: "natural",
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        timeout: 300000, 
-      }
-    );
+    // Run Flux 1.1 Pro
+    const output = await replicate.run("black-forest-labs/flux-1.1-pro", {
+      input,
+    });
 
-    if (response.data?.data?.[0]?.url) {
-      return {
-        success: true,
-        imageUrl: response.data.data[0].url,
-        revisedPrompt: response.data.data[0].revised_prompt,
-        originalDescription: description,
-      };
-    } else {
-      throw new Error("No image URL returned from DALL-E");
+    console.log("📦 Raw output type:", typeof output);
+    console.log("📦 Raw output constructor:", output?.constructor?.name);
+    console.log("📦 Full raw output:", JSON.stringify(output, null, 2));
+
+    if (!output) {
+      throw new Error("❌ No output returned from Replicate");
     }
-  } catch (error) {
-    console.error("DALL-E Error:", error.response?.data || error.message);
+
+    // Resolve image URL
+    let imageUrl;
+    if (typeof output.url === "function") {
+      const maybeUrl = output.url();
+      imageUrl = maybeUrl instanceof URL ? maybeUrl.toString() : maybeUrl;
+      console.log("🔗 Using output.url():", imageUrl);
+    } else if (output.output) {
+      imageUrl = output.output;
+      console.log("🔗 Using output.output:", imageUrl);
+    } else {
+      imageUrl = output;
+      console.log("🔗 Using raw output as URL:", imageUrl);
+    }
+
+    if (!imageUrl || typeof imageUrl !== "string") {
+      throw new Error("❌ Invalid image URL returned");
+    }
+
+    console.log("🌐 Final resolved Image URL:", imageUrl);
+
+    // Download image
+    console.log("📡 Downloading image...");
+    const res = await fetch(imageUrl);
+
+    if (!res.ok) {
+      throw new Error(
+        `❌ Failed to fetch image: ${res.status} ${res.statusText}`
+      );
+    }
+
+    const buffer = Buffer.from(await res.arrayBuffer());
+    console.log(`📏 Downloaded image buffer size: ${buffer.length} bytes`);
+
+    await ensureOutputDir();
+    const timestamp = Date.now();
+
+    // Build safe filename
+    const baseName =
+      imageName ||
+      sanitizeFilename(description).slice(0, 50) ||
+      `diagram-${timestamp}`;
+    const safeName = sanitizeFilename(baseName);
+
+    // Detect extension from URL
+    const ext = path.extname(new URL(imageUrl).pathname) || ".webp";
+
+    const filePath = `./outputs/${safeName}${ext}`;
+
+    await fs.writeFile(filePath, buffer);
+
+    console.log("✅ Image saved at:", filePath);
+
+    return {
+      success: true,
+      imageUrl,
+      filePath,
+      rawOutput: output,
+      originalDescription: description,
+    };
+  } catch (err) {
+    console.error("❌ Generation failed:", err.message || err);
     return {
       success: false,
-      error: error.response?.data?.error?.message || error.message,
+      error: err.message || err,
       originalDescription: description,
     };
   }
 };
 
-// Function to store image in database for persistent storage
+// 2. UPDATE: storeImageInDatabase function to include lesson_id
 const storeImageInDatabase = async (
   sessionId,
   messageId,
@@ -210,7 +242,8 @@ const storeImageInDatabase = async (
   subject,
   success,
   errorMessage = null,
-  connection = null // Accept connection parameter
+  connection = null,
+  lessonId = null // NEW: Add lessonId parameter
 ) => {
   let shouldReleaseConnection = false;
 
@@ -221,15 +254,42 @@ const storeImageInDatabase = async (
       shouldReleaseConnection = true;
     }
 
+    // Handle different imageUrl types more safely
+    let actualImageUrl = null;
+
+    if (imageUrl) {
+      if (typeof imageUrl === "string") {
+        actualImageUrl = imageUrl;
+      } else if (typeof imageUrl === "object") {
+        // Check if it's a ReadableStream or other object
+        if (imageUrl.constructor?.name === "ReadableStream") {
+          console.warn(
+            "⚠️ Cannot store ReadableStream in database, setting to null"
+          );
+          actualImageUrl = null;
+        } else {
+          console.warn(
+            "⚠️ Unknown imageUrl object type:",
+            imageUrl.constructor?.name
+          );
+          actualImageUrl = null;
+        }
+      } else {
+        console.warn("⚠️ Invalid imageUrl type:", typeof imageUrl);
+        actualImageUrl = null;
+      }
+    }
+
     const [result] = await connection.query(
       `INSERT INTO generated_diagrams 
-       (session_id, message_id, description, image_url, subject, success, error_message, revised_prompt) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (session_id, lesson_id, message_id, description, image_url, subject, success, error_message, revised_prompt) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         sessionId,
+        lessonId,
         messageId,
         description,
-        imageUrl,
+        actualImageUrl, // Use processed URL
         subject,
         success,
         errorMessage,
@@ -237,10 +297,12 @@ const storeImageInDatabase = async (
       ]
     );
 
-    console.log(`Stored diagram in database with ID: ${result.insertId}`);
+    console.log(
+      `✅ Stored diagram in database with ID: ${result.insertId}, lesson_id: ${lessonId}`
+    );
     return result.insertId;
   } catch (error) {
-    console.error("Error storing image in database:", error);
+    console.error("❌ Error storing image in database:", error);
     throw error;
   } finally {
     // Only release if we created the connection
@@ -256,12 +318,32 @@ const processLessonContent = async (
   subject,
   sessionId = null,
   messageId = null,
-  connection = null
+  connection = null,
+  lessonId = null // Keep lessonId for cache check
 ) => {
+  let localConnection = null;
+  let shouldReleaseConnection = false;
+
   try {
     console.log("🔥 processLessonContent CALLED");
     console.log("📏 Content length:", content?.length);
     console.log("📜 Subject received:", subject);
+    console.log("🎯 Lesson ID:", lessonId);
+
+    // Get a fresh connection if none provided or if the provided one is closed
+    if (!connection) {
+      localConnection = await pool.getConnection();
+      shouldReleaseConnection = true;
+    } else {
+      try {
+        await connection.query("SELECT 1");
+        localConnection = connection;
+      } catch (connError) {
+        console.warn("⚠️ Provided connection is closed, getting new one");
+        localConnection = await pool.getConnection();
+        shouldReleaseConnection = true;
+      }
+    }
 
     const inlinePattern = /\[CreateVisual:\s*["'](.+?)["']\]/g;
     const blockPattern = /CreateVisual:\s*([\s\S]+?)(?=\n\n|$)/gi;
@@ -272,21 +354,14 @@ const processLessonContent = async (
     console.log("🔍 Starting visual processing...");
     console.log(`📝 Original subject: ${subject}`);
 
-    // 1. Match inline prompts like [CreateVisual: "Draw a plant cell"]
+    // Inline matches
     for (const match of content.matchAll(inlinePattern)) {
-      let description = match[1].trim();
-      description = description.replace(/\s+/g, " ");
-
-      allMatches.push({
-        fullMatch: match[0],
-        description,
-        subject,
-      });
-
+      let description = match[1].trim().replace(/\s+/g, " ");
+      allMatches.push({ fullMatch: match[0], description, subject });
       console.log(`✅ Found inline visual: "${description}"`);
     }
 
-    // 2. Match block prompts (multiline structured format)
+    // Block matches
     for (const match of content.matchAll(blockPattern)) {
       const block = match[1].trim();
 
@@ -304,64 +379,106 @@ const processLessonContent = async (
 
       if (description) {
         description = description.replace(/\s+/g, " ");
-
         const finalSubject = subjectOverride || subject;
-
         allMatches.push({
           fullMatch: match[0],
           description,
           subject: finalSubject,
         });
-
         console.log(
           `🧾 Parsed block visual: Subject="${finalSubject}", Description="${description}"`
         );
-      } else {
-        console.warn(`⚠ No valid Focus/Topic found in block: ${block}`);
       }
     }
 
     console.log(`🧪 Total visuals to generate: ${allMatches.length}`);
 
-    // 3. Process each visual request
+    // Process visuals
     for (const {
       fullMatch,
       description,
       subject: effectiveSubject,
     } of allMatches) {
       console.log(
-        `🎯 Generating diagram for: "${description}" [Subject: ${effectiveSubject}]`
+        `🎯 Handling diagram for: "${description}" [Subject: ${effectiveSubject}, Lesson: ${lessonId}]`
       );
 
-      const diagramResult = await generateDiagram(
-        description,
-        effectiveSubject
-      );
+      let diagramResult;
+      let diagramId = null;
 
-      if (diagramResult.success) {
-        let diagramId = null;
+      // ✅ Only lessonId-based cache check
+      if (localConnection && lessonId) {
+        try {
+          const [rows] = await localConnection.query(
+            `SELECT id, image_url 
+       FROM generated_diagrams 
+       WHERE lesson_id = ? AND success = 1
+       ORDER BY generation_time DESC LIMIT 1`,
+            [lessonId]
+          );
 
-        // Save to DB if session info is provided
-        if (sessionId && messageId) {
+          if (rows.length > 0) {
+            const existing = rows[0];
+            console.log(
+              `📂 Image found in lesson cache: Lesson=${lessonId}, ID=${existing.id}`
+            );
+            diagramResult = { success: true, imageUrl: existing.image_url };
+            diagramId = existing.id;
+          } else {
+            console.log(
+              `🔎 No existing image found for Lesson=${lessonId}, will generate new one.`
+            );
+          }
+        } catch (cacheError) {
+          console.warn("⚠️ Lesson cache check failed:", cacheError.message);
+        }
+      }
+
+      // 🖼️ Generate if no existing image
+      if (!diagramResult) {
+        console.log(`⚙️ Generating new diagram for "${description}"`);
+        diagramResult = await generateDiagram(description, effectiveSubject);
+
+        if (diagramResult.success && sessionId && localConnection) {
           try {
+            if (
+              !diagramResult.imageUrl ||
+              typeof diagramResult.imageUrl !== "string"
+            ) {
+              console.warn(
+                "⚠️ Invalid imageUrl format:",
+                typeof diagramResult.imageUrl
+              );
+              diagramResult.imageUrl = null;
+            }
+
             diagramId = await storeImageInDatabase(
               sessionId,
-              messageId,
+              messageId || null,
               description,
               diagramResult.imageUrl,
               effectiveSubject,
               true,
-              null
+              null,
+              localConnection,
+              lessonId
+            );
+            console.log(
+              `💾 Stored new diagram in DB: ID=${diagramId}, Lesson=${lessonId}`
             );
           } catch (dbError) {
-            console.warn("⚠ DB Store Error:", dbError);
+            console.warn("⚠️ DB Store Error:", dbError.message);
           }
         }
+      }
 
+      // Replace placeholder with diagram
+      if (diagramResult?.success) {
         const imageHtml = `
         <div class="lesson-diagram" 
              style="margin: 20px 0; text-align: center; border: 2px solid #e0e0e0; border-radius: 12px; padding: 15px; background: #f9f9f9;" 
              data-diagram-id="${diagramId}" 
+             data-lesson-id="${lessonId}"
              data-description="${description.replace(/"/g, "&quot;")}"
              data-subject="${effectiveSubject}">
           <h4 style="color: #333; margin-bottom: 10px; font-size: 16px;">${description}</h4>
@@ -383,7 +500,9 @@ const processLessonContent = async (
         </div>`;
 
         processedContent = processedContent.replace(fullMatch, imageHtml);
-        console.log(`✅ Inserted diagram for: ${description}`);
+        console.log(
+          `✅ Inserted diagram for: ${description} (Lesson: ${lessonId})`
+        );
       }
     }
 
@@ -391,9 +510,17 @@ const processLessonContent = async (
   } catch (error) {
     console.error("🚨 Visual processing error:", error);
     return content;
+  } finally {
+    if (shouldReleaseConnection && localConnection) {
+      try {
+        localConnection.release();
+        console.log("🔌 Released local database connection");
+      } catch (releaseError) {
+        console.warn("⚠️ Error releasing connection:", releaseError.message);
+      }
+    }
   }
 };
-
 
 // Check if database columns exist
 const checkDatabaseColumns = async (connection) => {
@@ -481,24 +608,44 @@ const initializeDatabase = async () => {
 
     // 4. Enhanced generated_diagrams table with better storage
     await connection.query(`
-      CREATE TABLE IF NOT EXISTS generated_diagrams (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        session_id INT NOT NULL,
-        message_id VARCHAR(100),
-        description TEXT NOT NULL,
-        image_url VARCHAR(1000),
-        revised_prompt TEXT,
-        subject VARCHAR(50),
-        generation_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        success BOOLEAN DEFAULT TRUE,
-        error_message TEXT,
-        expires_at TIMESTAMP NULL,
-        is_persistent BOOLEAN DEFAULT TRUE,
-        INDEX idx_session_id (session_id),
-        INDEX idx_expires_at (expires_at),
-        INDEX idx_generation_time (generation_time)
-      ) ENGINE=InnoDB
-    `);
+  CREATE TABLE IF NOT EXISTS generated_diagrams (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    session_id INT NOT NULL,
+    lesson_id INT NULL,  -- NEW: Add lesson_id column
+    message_id VARCHAR(100),
+    description TEXT NOT NULL,
+    image_url VARCHAR(1000),
+    revised_prompt TEXT,
+    subject VARCHAR(50),
+    generation_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    success BOOLEAN DEFAULT TRUE,
+    error_message TEXT,
+    expires_at TIMESTAMP NULL,
+    is_persistent BOOLEAN DEFAULT TRUE,
+    INDEX idx_session_id (session_id),
+    INDEX idx_lesson_id (lesson_id),  -- NEW: Add index for lesson_id
+    INDEX idx_expires_at (expires_at),
+    INDEX idx_generation_time (generation_time)
+  ) ENGINE=InnoDB
+`);
+
+    // NEW: Check if lesson_id column exists and add it if missing
+    const [diagramColumns] = await connection.query(`
+  SELECT COLUMN_NAME 
+  FROM INFORMATION_SCHEMA.COLUMNS 
+  WHERE TABLE_SCHEMA = DATABASE() 
+  AND TABLE_NAME = 'generated_diagrams' 
+  AND COLUMN_NAME = 'lesson_id'
+`);
+
+    if (diagramColumns.length === 0) {
+      await connection.query(`
+    ALTER TABLE generated_diagrams 
+    ADD COLUMN lesson_id INT NULL,
+    ADD INDEX idx_lesson_id (lesson_id)
+  `);
+      console.log("✅ Added lesson_id column to generated_diagrams table");
+    }
 
     // 5. Create image_cache table for better persistence
     await connection.query(`
@@ -658,6 +805,7 @@ const startLesson = async (req, res) => {
       messages = [],
       student_previous_summary,
       type,
+      lesson_id,
     } = req.body;
 
     // Get connection early and keep it throughout the function
@@ -682,12 +830,13 @@ const startLesson = async (req, res) => {
       student_name,
       subject,
       lesson_topic,
+      lesson_id, // NEW: Log lesson_id
     });
 
     // Normalize subject
     const normalizedSubject = subject.trim().toLowerCase();
     console.log(
-      `Received subject: ${subject}, normalized: ${normalizedSubject}`
+      `Received subject: ${subject}, normalized: ${normalizedSubject}, lesson_id: ${lesson_id}`
     );
 
     // Use original subject directly to fetch prompt dynamically
@@ -864,14 +1013,14 @@ const startLesson = async (req, res) => {
       console.log("Processing visual content...");
       hasVisuals = true;
 
-      // CRITICAL FIX: Pass connection to processLessonContent or use pool
-      // Option 1: Modify processLessonContent to accept connection parameter
+      // UPDATED: Pass lesson_id to processLessonContent
       processedContent = await processLessonContent(
         assistantContent,
         normalizedSubject,
         sessionId,
         messageId,
-        connection // Pass the existing connection
+        connection,
+        lesson_id // NEW: Pass lesson_id to enable lesson-specific caching
       );
     }
 
@@ -935,6 +1084,7 @@ const startLesson = async (req, res) => {
       data: responseData,
       sessionId: sessionId,
       hasVisuals: hasVisuals,
+      lesson_id: lesson_id, // NEW: Return lesson_id in response
     });
   } catch (error) {
     console.error("Lesson Error:", error?.response?.data || error.message);
