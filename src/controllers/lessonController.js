@@ -797,7 +797,7 @@ const startLesson = async (req, res) => {
       messages = [],
       student_previous_summary,
       type,
-      lesson_id, 
+      lesson_id,
     } = req.body;
 
     // Get connection early and keep it throughout the function
@@ -822,7 +822,7 @@ const startLesson = async (req, res) => {
       student_name,
       subject,
       lesson_topic,
-      lesson_id, // NEW: Log lesson_id
+      lesson_id,
     });
 
     // Normalize subject
@@ -844,6 +844,14 @@ const startLesson = async (req, res) => {
         error: `Failed to fetch prompt for subject: ${subject} and type: ${type}`,
       });
     }
+
+    // Helper: convert JS Date or ISO string to MySQL DATETIME
+    const toMySQLDateTime = (date) => {
+      if (!date) return null;
+      const d = new Date(date);
+      if (isNaN(d.getTime())) return null;
+      return d.toISOString().slice(0, 19).replace("T", " ");
+    };
 
     // Check database columns availability
     const columnCheck = await checkDatabaseColumns(connection);
@@ -884,7 +892,7 @@ const startLesson = async (req, res) => {
               sessionId,
               latestMessage.role,
               latestMessage.content.trim(),
-              latestMessage.timestamp || new Date().toISOString(),
+              toMySQLDateTime(latestMessage.timestamp || new Date()),
               latestMessage.id || null,
               student_id,
             ]
@@ -907,7 +915,7 @@ const startLesson = async (req, res) => {
           tier,
           lesson_topic_code,
           lesson_topic,
-          new Date().toISOString(),
+          toMySQLDateTime(new Date()),
         ]
       );
       sessionId = result.insertId;
@@ -921,7 +929,7 @@ const startLesson = async (req, res) => {
             sessionId,
             msg.role,
             msg.content.trim(),
-            msg.timestamp || new Date().toISOString(),
+            toMySQLDateTime(msg.timestamp || new Date()),
             msg.id || null,
             student_id,
           ]);
@@ -946,7 +954,7 @@ const startLesson = async (req, res) => {
       tier,
       lesson_topic_code,
       lesson_topic,
-      lesson_start_time: new Date().toISOString(),
+      lesson_start_time: toMySQLDateTime(new Date()),
       student_previous_summary,
     };
 
@@ -1012,7 +1020,7 @@ const startLesson = async (req, res) => {
         sessionId,
         messageId,
         connection,
-        lesson_id // NEW: Pass lesson_id to enable lesson-specific caching
+        lesson_id
       );
     }
 
@@ -1023,7 +1031,7 @@ const startLesson = async (req, res) => {
         content: assistantContent,
         processed_content: processedContent,
         has_visuals: hasVisuals,
-        timestamp: new Date().toISOString(),
+        timestamp: toMySQLDateTime(new Date()),
         id: messageId,
       };
 
@@ -1049,7 +1057,6 @@ const startLesson = async (req, res) => {
       }
 
       insertQuery += `) VALUES (?, ?, ?, ?, ?, ?`;
-
       if (columnCheck.hasProcessedContent) insertQuery += `, ?`;
       if (columnCheck.hasVisuals) insertQuery += `, ?`;
       insertQuery += `)`;
@@ -1076,31 +1083,30 @@ const startLesson = async (req, res) => {
       data: responseData,
       sessionId: sessionId,
       hasVisuals: hasVisuals,
-      lesson_id: lesson_id, // NEW: Return lesson_id in response
+      lesson_id: lesson_id,
     });
- } 
- 
- catch (error) {
-  console.error("Lesson Error:", {
-    message: error.message,
-    stack: error.stack,
-    response: error.response?.data,
-  });
+  } catch (error) {
+    console.error("Lesson Error:", {
+      message: error.message,
+      stack: error.stack,
+      response: error.response?.data,
+    });
 
-  res.status(500).json({
-    success: false,
-    error: error.response?.data?.error?.message || error.message || "Internal Server Error",
-  });
-}
-
-  
-  finally {
+    res.status(500).json({
+      success: false,
+      error:
+        error.response?.data?.error?.message ||
+        error.message ||
+        "Internal Server Error",
+    });
+  } finally {
     // Always release the connection in the finally block
     if (connection) {
       connection.release();
     }
   }
 };
+
 
 // Add function to get lesson history
 const getLessonHistory = async (req, res) => {
@@ -1236,6 +1242,14 @@ const saveLessonData = async (req, res) => {
       }
     }
 
+    // Helper: convert JS Date or ISO string to MySQL DATETIME
+    const toMySQLDateTime = (date) => {
+      if (!date) return null;
+      const d = new Date(date);
+      if (isNaN(d.getTime())) return null;
+      return d.toISOString().slice(0, 19).replace("T", " ");
+    };
+
     // Prepare the data for insertion
     const insertData = {
       session_id: lessonData.session_id || null,
@@ -1249,11 +1263,13 @@ const saveLessonData = async (req, res) => {
       lesson_topic: lessonData.lesson_topic || null,
       lesson_run_mode: lessonData.lesson_run_mode || null,
       lesson_status: lessonData.lesson_status || null,
-      lesson_start_time: lessonData.lesson_start_time || null,
-      lesson_end_time: lessonData.lesson_end_time || null,
+      lesson_start_time: toMySQLDateTime(
+        lessonData.lesson_start_time || new Date()
+      ),
+      lesson_end_time: toMySQLDateTime(lessonData.lesson_end_time),
       lesson_duration_minutes: lessonData.lesson_duration_minutes || null,
-      student_start_time: lessonData.student_start_time || null,
-      student_end_time: lessonData.student_end_time || null,
+      student_start_time: toMySQLDateTime(lessonData.student_start_time),
+      student_end_time: toMySQLDateTime(lessonData.student_end_time),
       student_total_duration_minutes:
         lessonData.student_total_duration_minutes || null,
       designed_pacing_minutes: lessonData.designed_pacing_minutes || null,
@@ -1316,6 +1332,7 @@ const saveLessonData = async (req, res) => {
     if (connection) connection.release();
   }
 };
+
 
 // Add endpoint to generate individual diagrams (for testing)
 const generateDiagramEndpoint = async (req, res) => {
