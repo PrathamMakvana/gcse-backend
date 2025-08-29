@@ -1078,13 +1078,23 @@ const startLesson = async (req, res) => {
       hasVisuals: hasVisuals,
       lesson_id: lesson_id, // NEW: Return lesson_id in response
     });
-  } catch (error) {
-    console.error("Lesson Error:", error?.response?.data || error.message);
-    res.status(500).json({
-      success: false,
-      error: error?.response?.data?.error?.message || "Internal Server Error",
-    });
-  } finally {
+ } 
+ 
+ catch (error) {
+  console.error("Lesson Error:", {
+    message: error.message,
+    stack: error.stack,
+    response: error.response?.data,
+  });
+
+  res.status(500).json({
+    success: false,
+    error: error.response?.data?.error?.message || error.message || "Internal Server Error",
+  });
+}
+
+  
+  finally {
     // Always release the connection in the finally block
     if (connection) {
       connection.release();
