@@ -5,11 +5,40 @@ const cors = require('cors');
 
 const app = express();
 
+// ===== Allowed Origins =====
+const ALLOW_ORIGINS = [
+  'https://uk.tutoh.ai',
+  'https://gcse-admin-panel.vercel.app',
+  'https://gcseadmin.tutoh.ai',
+  'http://localhost:3000'
+];
+
+// ===== CORS Setup =====
+app.use(cors({
+  origin(origin, cb) {
+    if (!origin || ALLOW_ORIGINS.includes(origin)) {
+      return cb(null, true);
+    }
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  credentials: true,
+  maxAge: 86400
+}));
+
+// ✅ Universal preflight handler (Express v4 & v5 safe)
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
 // Middleware
 app.use(express.json());
-app.use(cors());
 
-// MySQL Connection
+// ===== MySQL Connection =====
 const connection = mysql.createConnection({
   host: process.env.DB_HOST,
   port: process.env.DB_PORT,
@@ -26,20 +55,20 @@ connection.connect((err) => {
   }
 });
 
-// ✅ Add a default route for confirmation
-app.get('/', (req, res) => {
-  res.send('✅ Server is running and API is live!');
-});
-
-// Routes
+// ===== Routes =====
 const lessonRoutes = require('./routes/lessonRoutes');
 const mockRoutes = require('./routes/mockRoutes');
 
 app.use('/api/lesson', lessonRoutes);
 app.use('/api/mock', mockRoutes);
 
-// Server
-const PORT = process.env.PORT || 9000;
-app.listen(PORT, () => {
+// ===== Server =====
+const PORT = process.env.PORT || 5000;
+const server = app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
 });
+
+// ===== Prevent premature kills on long requests/streams =====
+server.requestTimeout   = 0;        // disable per-request timeout
+server.keepAliveTimeout = 120000;   // 120s
+server.headersTimeout   = 125000;   // must be > keepAliveTimeout
