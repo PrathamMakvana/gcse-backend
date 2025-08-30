@@ -1242,6 +1242,27 @@ const saveLessonData = async (req, res) => {
       }
     }
 
+// Sanitize ENUM fields (case-insensitive)
+const normalizeEnum = (value, allowed) => {
+  if (!value) return null;
+  const match = allowed.find(
+    (option) => option.toLowerCase() === value.toLowerCase()
+  );
+  return match || null;
+};
+
+lessonData.student_confidence_level = normalizeEnum(
+  lessonData.student_confidence_level,
+  ["High", "Medium", "Low"]
+);
+
+lessonData.student_progress_trend = normalizeEnum(
+  lessonData.student_progress_trend,
+  ["Improving", "Stagnant", "Declining"]
+);
+
+
+
     // Helper: convert JS Date or ISO string to MySQL DATETIME
     const toMySQLDateTime = (date) => {
       if (!date) return null;
