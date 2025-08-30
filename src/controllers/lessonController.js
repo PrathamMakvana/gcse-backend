@@ -5,9 +5,6 @@ const { VertexAI } = require("@google-cloud/vertexai");
 const fs = require("fs/promises");
 const Replicate = require("replicate");
 
-
-
-
 // ✅ Create MySQL pool
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -22,17 +19,24 @@ const pool = mysql.createPool({
 
 // ✅ Prompt API
 const PROMPT_API_URL = "https://laravel.tutoh.ai/api/get-prompt/";
-console.log('=============> process.env.OPENAI_API_KEY =================>' + process.env.OPENAI_API_KEY);
+console.log(
+  "=============> process.env.OPENAI_API_KEY =================>" +
+    process.env.OPENAI_API_KEY
+);
 const fetchPromptFromAPI = async (subject, type) => {
   try {
     const response = await axios.get(
-      `${PROMPT_API_URL}${encodeURIComponent(subject)}/${encodeURIComponent(type)}`
+      `${PROMPT_API_URL}${encodeURIComponent(subject)}/${encodeURIComponent(
+        type
+      )}`
     );
 
     if (response.data.success && response.data.data?.prompt) {
       return response.data.data.prompt;
     } else {
-      throw new Error(`Prompt not found for subject "${subject}" and type "${type}"`);
+      throw new Error(
+        `Prompt not found for subject "${subject}" and type "${type}"`
+      );
     }
   } catch (error) {
     console.error(`❌ Error fetching prompt:`, error.message);
@@ -40,18 +44,15 @@ const fetchPromptFromAPI = async (subject, type) => {
   }
 };
 
-
-
 // // ✅ Google Cloud settings
 // const PROJECT_ID = "dreams-review-api";
-// const LOCATION = "us-central1"; 
+// const LOCATION = "us-central1";
 
 // // ✅ Create Vertex AI client
 // const vertexAI = new VertexAI({
 //   project: PROJECT_ID,
 //   location: LOCATION,
 // });
-
 
 // // ✅ Generate diagram using Imagen-4
 // const generateDiagram = async (description) => {
@@ -107,17 +108,10 @@ const fetchPromptFromAPI = async (subject, type) => {
 //   }
 // };
 
-
-
-
-
-
-
-
-
-const fetch = global.fetch || ((...args) =>
-  import("node-fetch").then(({ default: fetch }) => fetch(...args))
-);
+const fetch =
+  global.fetch ||
+  ((...args) =>
+    import("node-fetch").then(({ default: fetch }) => fetch(...args)));
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
@@ -195,7 +189,9 @@ const generateDiagram = async (description, imageName = "") => {
     const res = await fetch(imageUrl);
 
     if (!res.ok) {
-      throw new Error(`❌ Failed to fetch image: ${res.status} ${res.statusText}`);
+      throw new Error(
+        `❌ Failed to fetch image: ${res.status} ${res.statusText}`
+      );
     }
 
     const buffer = Buffer.from(await res.arrayBuffer());
@@ -206,7 +202,9 @@ const generateDiagram = async (description, imageName = "") => {
 
     // Build safe filename
     const baseName =
-      imageName || sanitizeFilename(description).slice(0, 50) || `diagram-${timestamp}`;
+      imageName ||
+      sanitizeFilename(description).slice(0, 50) ||
+      `diagram-${timestamp}`;
     const safeName = sanitizeFilename(baseName);
 
     // Detect extension from URL
@@ -235,8 +233,6 @@ const generateDiagram = async (description, imageName = "") => {
   }
 };
 
-
-
 // 2. UPDATE: storeImageInDatabase function to include lesson_id
 const storeImageInDatabase = async (
   sessionId,
@@ -247,7 +243,7 @@ const storeImageInDatabase = async (
   success,
   errorMessage = null,
   connection = null,
-  lessonId = null  // NEW: Add lessonId parameter
+  lessonId = null // NEW: Add lessonId parameter
 ) => {
   let shouldReleaseConnection = false;
 
@@ -260,17 +256,22 @@ const storeImageInDatabase = async (
 
     // Handle different imageUrl types more safely
     let actualImageUrl = null;
-    
+
     if (imageUrl) {
-      if (typeof imageUrl === 'string') {
+      if (typeof imageUrl === "string") {
         actualImageUrl = imageUrl;
-      } else if (typeof imageUrl === 'object') {
+      } else if (typeof imageUrl === "object") {
         // Check if it's a ReadableStream or other object
-        if (imageUrl.constructor?.name === 'ReadableStream') {
-          console.warn("⚠️ Cannot store ReadableStream in database, setting to null");
+        if (imageUrl.constructor?.name === "ReadableStream") {
+          console.warn(
+            "⚠️ Cannot store ReadableStream in database, setting to null"
+          );
           actualImageUrl = null;
         } else {
-          console.warn("⚠️ Unknown imageUrl object type:", imageUrl.constructor?.name);
+          console.warn(
+            "⚠️ Unknown imageUrl object type:",
+            imageUrl.constructor?.name
+          );
           actualImageUrl = null;
         }
       } else {
@@ -285,10 +286,10 @@ const storeImageInDatabase = async (
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         sessionId,
-        lessonId,      
+        lessonId,
         messageId,
         description,
-        actualImageUrl,  // Use processed URL
+        actualImageUrl, // Use processed URL
         subject,
         success,
         errorMessage,
@@ -296,7 +297,9 @@ const storeImageInDatabase = async (
       ]
     );
 
-    console.log(`✅ Stored diagram in database with ID: ${result.insertId}, lesson_id: ${lessonId}`);
+    console.log(
+      `✅ Stored diagram in database with ID: ${result.insertId}, lesson_id: ${lessonId}`
+    );
     return result.insertId;
   } catch (error) {
     console.error("❌ Error storing image in database:", error);
@@ -308,11 +311,6 @@ const storeImageInDatabase = async (
     }
   }
 };
-
-
-
-
-
 
 // Enhanced function to process lesson content with better image handling
 const processLessonContent = async (
@@ -396,7 +394,11 @@ const processLessonContent = async (
     console.log(`🧪 Total visuals to generate: ${allMatches.length}`);
 
     // Process visuals
-    for (const { fullMatch, description, subject: effectiveSubject } of allMatches) {
+    for (const {
+      fullMatch,
+      description,
+      subject: effectiveSubject,
+    } of allMatches) {
       console.log(
         `🎯 Handling diagram for: "${description}" [Subject: ${effectiveSubject}, Lesson: ${lessonId}]`
       );
@@ -405,33 +407,32 @@ const processLessonContent = async (
       let diagramId = null;
 
       // ✅ Only lessonId-based cache check
-    if (localConnection && lessonId) {
-  try {
-    const [rows] = await connection.query(
-          `SELECT id, image_url
+      if (localConnection && lessonId) {
+        try {
+          const [rows] = await connection.query(
+            `SELECT id, image_url
            FROM generated_diagrams
            WHERE lesson_id = ? AND description = ? AND success = 1
            ORDER BY generation_time DESC LIMIT 1`,
-          [lessonId, description]
-        );
+            [lessonId, description]
+          );
 
-    if (rows.length > 0) {
-      const existing = rows[0];
-      console.log(
-        `📂 Image found in lesson cache: Lesson=${lessonId}, ID=${existing.id}`
-      );
-      diagramResult = { success: true, imageUrl: existing.image_url };
-      diagramId = existing.id;
-    } else {
-      console.log(
-        `🔎 No existing image found for Lesson=${lessonId}, will generate new one.`
-      );
-    }
-  } catch (cacheError) {
-    console.warn("⚠️ Lesson cache check failed:", cacheError.message);
-  }
-}
-
+          if (rows.length > 0) {
+            const existing = rows[0];
+            console.log(
+              `📂 Image found in lesson cache: Lesson=${lessonId}, ID=${existing.id}`
+            );
+            diagramResult = { success: true, imageUrl: existing.image_url };
+            diagramId = existing.id;
+          } else {
+            console.log(
+              `🔎 No existing image found for Lesson=${lessonId}, will generate new one.`
+            );
+          }
+        } catch (cacheError) {
+          console.warn("⚠️ Lesson cache check failed:", cacheError.message);
+        }
+      }
 
       // 🖼️ Generate if no existing image
       if (!diagramResult) {
@@ -440,8 +441,14 @@ const processLessonContent = async (
 
         if (diagramResult.success && sessionId && localConnection) {
           try {
-            if (!diagramResult.imageUrl || typeof diagramResult.imageUrl !== "string") {
-              console.warn("⚠️ Invalid imageUrl format:", typeof diagramResult.imageUrl);
+            if (
+              !diagramResult.imageUrl ||
+              typeof diagramResult.imageUrl !== "string"
+            ) {
+              console.warn(
+                "⚠️ Invalid imageUrl format:",
+                typeof diagramResult.imageUrl
+              );
               diagramResult.imageUrl = null;
             }
 
@@ -456,7 +463,9 @@ const processLessonContent = async (
               localConnection,
               lessonId
             );
-            console.log(`💾 Stored new diagram in DB: ID=${diagramId}, Lesson=${lessonId}`);
+            console.log(
+              `💾 Stored new diagram in DB: ID=${diagramId}, Lesson=${lessonId}`
+            );
           } catch (dbError) {
             console.warn("⚠️ DB Store Error:", dbError.message);
           }
@@ -483,14 +492,17 @@ const processLessonContent = async (
           </div>
           <p style="font-style: italic; color: #666; margin-top: 10px; font-size: 12px;">
             Subject: ${
-              effectiveSubject.charAt(0).toUpperCase() + effectiveSubject.slice(1)
+              effectiveSubject.charAt(0).toUpperCase() +
+              effectiveSubject.slice(1)
             } | 
             Labels: A, B, C, D, E, F, G, H, I, J (as applicable)
           </p>
         </div>`;
 
         processedContent = processedContent.replace(fullMatch, imageHtml);
-        console.log(`✅ Inserted diagram for: ${description} (Lesson: ${lessonId})`);
+        console.log(
+          `✅ Inserted diagram for: ${description} (Lesson: ${lessonId})`
+        );
       }
     }
 
@@ -509,10 +521,6 @@ const processLessonContent = async (
     }
   }
 };
-
-
-
-
 
 // Check if database columns exist
 const checkDatabaseColumns = async (connection) => {
@@ -599,7 +607,7 @@ const initializeDatabase = async () => {
     }
 
     // 4. Enhanced generated_diagrams table with better storage
- await connection.query(`
+    await connection.query(`
   CREATE TABLE IF NOT EXISTS generated_diagrams (
     id INT AUTO_INCREMENT PRIMARY KEY,
     session_id INT NOT NULL,
@@ -621,8 +629,8 @@ const initializeDatabase = async () => {
   ) ENGINE=InnoDB
 `);
 
-// NEW: Check if lesson_id column exists and add it if missing
-const [diagramColumns] = await connection.query(`
+    // NEW: Check if lesson_id column exists and add it if missing
+    const [diagramColumns] = await connection.query(`
   SELECT COLUMN_NAME 
   FROM INFORMATION_SCHEMA.COLUMNS 
   WHERE TABLE_SCHEMA = DATABASE() 
@@ -630,14 +638,14 @@ const [diagramColumns] = await connection.query(`
   AND COLUMN_NAME = 'lesson_id'
 `);
 
-if (diagramColumns.length === 0) {
-  await connection.query(`
+    if (diagramColumns.length === 0) {
+      await connection.query(`
     ALTER TABLE generated_diagrams 
     ADD COLUMN lesson_id INT NULL,
     ADD INDEX idx_lesson_id (lesson_id)
   `);
-  console.log("✅ Added lesson_id column to generated_diagrams table");
-}
+      console.log("✅ Added lesson_id column to generated_diagrams table");
+    }
 
     // 5. Create image_cache table for better persistence
     await connection.query(`
@@ -1107,7 +1115,6 @@ const startLesson = async (req, res) => {
   }
 };
 
-
 // Add function to get lesson history
 const getLessonHistory = async (req, res) => {
   let connection;
@@ -1242,26 +1249,24 @@ const saveLessonData = async (req, res) => {
       }
     }
 
-// Sanitize ENUM fields (case-insensitive)
-const normalizeEnum = (value, allowed) => {
-  if (!value) return null;
-  const match = allowed.find(
-    (option) => option.toLowerCase() === value.toLowerCase()
-  );
-  return match || null;
-};
+    // Sanitize ENUM fields (case-insensitive)
+    const normalizeEnum = (value, allowed) => {
+      if (!value) return null;
+      const match = allowed.find(
+        (option) => option.toLowerCase() === value.toLowerCase()
+      );
+      return match || null;
+    };
 
-lessonData.student_confidence_level = normalizeEnum(
-  lessonData.student_confidence_level,
-  ["High", "Medium", "Low"]
-);
+    lessonData.student_confidence_level = normalizeEnum(
+      lessonData.student_confidence_level,
+      ["High", "Medium", "Low"]
+    );
 
-lessonData.student_progress_trend = normalizeEnum(
-  lessonData.student_progress_trend,
-  ["Improving", "Stagnant", "Declining"]
-);
-
-
+    lessonData.student_progress_trend = normalizeEnum(
+      lessonData.student_progress_trend,
+      ["Improving", "Stagnant", "Declining"]
+    );
 
     // Helper: convert JS Date or ISO string to MySQL DATETIME
     const toMySQLDateTime = (date) => {
@@ -1311,8 +1316,8 @@ lessonData.student_progress_trend = normalizeEnum(
       regeneration_count: lessonData.regeneration_count || null,
       regeneration_maxed: lessonData.regeneration_maxed || null,
       lesson_quality_commentary: lessonData.lesson_quality_commentary || null,
-      student_confidence_level: lessonData.student_confidence_level || null,
-      student_progress_trend: lessonData.student_progress_trend || null,
+      student_confidence_level: lessonData.student_confidence_level,
+      student_progress_trend: lessonData.student_progress_trend,
       average_subject_score: lessonData.average_subject_score || null,
       predicted_grade: lessonData.predicted_grade || null,
       student_summary: lessonData.student_summary || null,
@@ -1353,7 +1358,6 @@ lessonData.student_progress_trend = normalizeEnum(
     if (connection) connection.release();
   }
 };
-
 
 // Add endpoint to generate individual diagrams (for testing)
 const generateDiagramEndpoint = async (req, res) => {
