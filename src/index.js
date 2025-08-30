@@ -68,6 +68,8 @@ const server = app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
 });
 
+console.log('=======================> REPLICATE_API_TOKEN ==============> ' + process.env.REPLICATE_API_TOKEN)
+
 // ===== Prevent premature kills on long requests/streams =====
 server.requestTimeout   = 0;        // disable per-request timeout
 server.keepAliveTimeout = 120000;   // 120s
