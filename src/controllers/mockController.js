@@ -13,7 +13,7 @@ const pool = mysql.createPool({
 });
 
 const PROMPT_API_URL = "https://laravel.tutoh.ai/api/get-prompt/";
-
+console.log('=============> process.env.OPENAI_API_KEY =================>' + process.env.OPENAI_API_KEY);
 // Function to fetch prompt from API
 const fetchPromptFromAPI = async (subject, type) => {
   try {
