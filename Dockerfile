@@ -9,7 +9,7 @@ RUN npm install --legacy-peer-deps
 
 COPY . .
 
-EXPOSE 8080
+EXPOSE 9000
 
 # For Windows CMD — use this to bind to host IP
 CMD ["npm", "start"]
