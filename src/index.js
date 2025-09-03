@@ -59,7 +59,9 @@ connection.connect((err) => {
 // ===== Routes =====
 const lessonRoutes = require('./routes/lessonRoutes');
 const mockRoutes = require('./routes/mockRoutes');
-
+app.get("/", (req, res) => {
+  res.send("Backend is running 🚀");
+});
 app.use('/api/lesson', lessonRoutes);
 app.use('/api/mock', mockRoutes);
 
