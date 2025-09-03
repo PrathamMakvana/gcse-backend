@@ -990,6 +990,7 @@ const startLesson = async (req, res) => {
       model: "gpt-4.1",
       messages: chatHistory,
       temperature: 1,
+      stream: true,
       max_tokens: 4096,
     };
 
