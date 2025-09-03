@@ -10,7 +10,7 @@ const ALLOW_ORIGINS = [
   'https://uk.tutoh.ai',
   'https://gcse-admin-panel.vercel.app',
   'https://gcseadmin.tutoh.ai',
-  'https://node-gcse-backend-157527989777.europe-west2.run.app/',
+  'https://node-gcse-backend-157527989777.europe-west2.run.app',
   'http://localhost:3000'
 ];
 
