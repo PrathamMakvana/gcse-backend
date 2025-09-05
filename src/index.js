@@ -12,7 +12,8 @@ const ALLOW_ORIGINS = [
   'https://gcseadmin.tutoh.ai',
   'https://node-gcse-backend-157527989777.europe-west2.run.app',
   'http://localhost:3000',
-  'http://34.95.123.156:80'
+  'http://34.95.123.156:80',
+  'http://34.95.123.156'
 ];
 
 // ===== CORS Setup =====
