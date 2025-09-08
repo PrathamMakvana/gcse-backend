@@ -4,6 +4,8 @@ const path = require("path");
 const { VertexAI } = require("@google-cloud/vertexai");
 const fs = require("fs/promises");
 const Replicate = require("replicate");
+const { GoogleGenAI } = require("@google/genai");
+const { GoogleGenerativeAI } = require("@google/generative-ai"); 
 
 // ✅ Create MySQL pool
 const pool = mysql.createPool({
@@ -18,10 +20,10 @@ const pool = mysql.createPool({
 });
 
 // ✅ Prompt API
-const PROMPT_API_URL = "https://laravel.tutoh.ai/api/get-prompt/";
+const PROMPT_API_URL = "https://thinkdream.in/GCSE/api/get-prompt/";
 console.log(
-  "=============> process.env.OPENAI_API_KEY =================>" +
-    process.env.OPENAI_API_KEY
+  "=============> process.env.GOOGLE_API_KEY =================>" +
+    process.env.GOOGLE_API_KEY
 );
 const fetchPromptFromAPI = async (subject, type) => {
   try {
@@ -44,78 +46,29 @@ const fetchPromptFromAPI = async (subject, type) => {
   }
 };
 
-// // ✅ Google Cloud settings
-// const PROJECT_ID = "dreams-review-api";
-// const LOCATION = "us-central1";
 
-// // ✅ Create Vertex AI client
-// const vertexAI = new VertexAI({
-//   project: PROJECT_ID,
-//   location: LOCATION,
-// });
 
-// // ✅ Generate diagram using Imagen-4
-// const generateDiagram = async (description) => {
-//   try {
-//    const model = vertexAI.getGenerativeModel({
-//   model: "imagegeneration@002",  // ✅ This maps to Imagen 2
-//   publisher: "google",
-// });
+process.env.GOOGLE_APPLICATION_CREDENTIALS = path.join(
+  __dirname,
+  "freeze-app-ed1c8a99cf24.json"
+);
 
-//     const request = {
-//       contents: [
-//         {
-//           role: "user",
-//           parts: [{ text: description }],
-//         },
-//       ],
-//     };
+const ai = new GoogleGenAI({
+  project: "freeze-app",
+  location: "us-central1",
+});
 
-//     const result = await model.generateContent(request);
+const model = 'gemini-2.5-pro';
 
-//     const imagePart = result.response.candidates?.[0]?.content?.parts?.find(
-//       (part) => part.inlineData?.mimeType === "image/png"
-//     );
 
-//     if (!imagePart) {
-//       throw new Error("❌ No image returned from Imagen-4.");
-//     }
 
-//     const buffer = Buffer.from(imagePart.inlineData.data, "base64");
-//     const outputDir = path.resolve(__dirname, "../outputs");
-
-//     if (!fs.existsSync(outputDir)) {
-//       fs.mkdirSync(outputDir, { recursive: true });
-//     }
-
-//     const outputPath = path.join(outputDir, `image-${Date.now()}.png`);
-//     fs.writeFileSync(outputPath, buffer);
-
-//     console.log("✅ Image saved at", outputPath);
-
-//     return {
-//       success: true,
-//       filePath: outputPath,
-//       originalDescription: description,
-//     };
-//   } catch (error) {
-//     console.error("❌ Vertex AI (Imagen-4) Error:", error.message);
-//     return {
-//       success: false,
-//       error: error.message,
-//       originalDescription: description,
-//     };
-//   }
-// };
 
 const fetch =
   global.fetch ||
   ((...args) =>
     import("node-fetch").then(({ default: fetch }) => fetch(...args)));
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN,
-});
+
 
 // Ensure outputs directory exists
 const ensureOutputDir = async (dir = "./outputs") => {
@@ -132,99 +85,214 @@ const sanitizeFilename = (name) => {
   return name.replace(/[<>:"/\\|?*\n\r\t]/g, "_").slice(0, 150);
 };
 
-const generateDiagram = async (description, imageName = "") => {
+
+// Helper to detect MIME type from buffer
+const detectMimeType = (buffer) => {
+  if (!buffer || buffer.length < 12) return "application/octet-stream";
+
+  // PNG magic number: 89 50 4E 47 0D 0A 1A 0A
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+    return "image/png";
+  }
+
+  // WEBP magic number: "RIFF"...."WEBP"
+  if (
+    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
+    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+
+  return "application/octet-stream";
+};
+
+
+
+
+
+// Helper function to upload base64 image to your endpoint
+const uploadBase64Image = async (base64DataUri) => {
+  try {
+    const response = await fetch('https://thinkdream.in/GCSE/api/upload-base64-image', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        image: base64DataUri
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Upload failed with status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    console.log('✅ Image uploaded successfully:', result);
+    
+    return {
+      success: true,
+      url: result.url,
+      fileName: result.file_name,
+      message: result.message
+    };
+  } catch (error) {
+    console.error('❌ Error uploading image:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+};
+
+const generateDiagram = async (description, imageName = "", sessionId = null, lessonId = null, messageId = null, subject = null) => {
   try {
     if (!description || description.trim().length === 0) {
       throw new Error("❌ Description is required to generate a diagram");
     }
 
-    console.log("🧠 Generating with prompt:", description);
+    console.log("🧠 Generating with Gemini Nano AI, prompt:", description);
 
-    const input = {
-      prompt: description,
-      aspect_ratio: "3:2",
-      output_format: "webp",
-      output_quality: 80,
-      safety_tolerance: 2,
-      prompt_upsampling: true,
-    };
+    const ai = new GoogleGenAI({});
 
-    console.log("📥 Input payload:", JSON.stringify(input, null, 2));
-
-    // Run Flux 1.1 Pro
-    const output = await replicate.run("black-forest-labs/flux-1.1-pro", {
-      input,
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-image-preview",
+      contents: description,
     });
 
-    console.log("📦 Raw output type:", typeof output);
-    console.log("📦 Raw output constructor:", output?.constructor?.name);
-    console.log("📦 Full raw output:", JSON.stringify(output, null, 2));
-
-    if (!output) {
-      throw new Error("❌ No output returned from Replicate");
+    if (!response?.candidates?.[0]?.content?.parts) {
+      throw new Error("❌ No output returned from Gemini AI");
     }
-
-    // Resolve image URL
-    let imageUrl;
-    if (typeof output.url === "function") {
-      const maybeUrl = output.url();
-      imageUrl = maybeUrl instanceof URL ? maybeUrl.toString() : maybeUrl;
-      console.log("🔗 Using output.url():", imageUrl);
-    } else if (output.output) {
-      imageUrl = output.output;
-      console.log("🔗 Using output.output:", imageUrl);
-    } else {
-      imageUrl = output;
-      console.log("🔗 Using raw output as URL:", imageUrl);
-    }
-
-    if (!imageUrl || typeof imageUrl !== "string") {
-      throw new Error("❌ Invalid image URL returned");
-    }
-
-    console.log("🌐 Final resolved Image URL:", imageUrl);
-
-    // Download image
-    console.log("📡 Downloading image...");
-    const res = await fetch(imageUrl);
-
-    if (!res.ok) {
-      throw new Error(
-        `❌ Failed to fetch image: ${res.status} ${res.statusText}`
-      );
-    }
-
-    const buffer = Buffer.from(await res.arrayBuffer());
-    console.log(`📏 Downloaded image buffer size: ${buffer.length} bytes`);
 
     await ensureOutputDir();
     const timestamp = Date.now();
 
-    // Build safe filename
     const baseName =
       imageName ||
       sanitizeFilename(description).slice(0, 50) ||
       `diagram-${timestamp}`;
     const safeName = sanitizeFilename(baseName);
 
-    // Detect extension from URL
-    const ext = path.extname(new URL(imageUrl).pathname) || ".webp";
+    let savedFiles = [];
+    let uploadedUrls = [];
+    let index = 1;
 
-    const filePath = `./outputs/${safeName}${ext}`;
+    for (const part of response.candidates[0].content.parts) {
+      if (part.inlineData?.data) {
+        const imageData = part.inlineData.data;
 
-    await fs.writeFile(filePath, buffer);
+        console.log("🔍 Base64 image received:", {
+          length: imageData.length,
+          preview: imageData.substring(0, 80) + "...",
+          ending: "..." + imageData.substring(imageData.length - 80),
+        });
 
-    console.log("✅ Image saved at:", filePath);
+        const buffer = Buffer.from(imageData, "base64");
+
+        // Detect MIME type
+        const mimeType = detectMimeType(buffer);
+        console.log("🧾 Detected MIME type:", mimeType);
+
+        // Save image file locally (optional - for backup)
+        const ext = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "bin";
+        const filePath = path.join("./outputs", `${safeName}-${index}.${ext}`);
+        await fs.writeFile(filePath, buffer);
+        console.log(`✅ Image saved locally at: ${filePath}`);
+        savedFiles.push(filePath);
+
+        // Create proper data URI
+        const dataUri = `data:${mimeType};base64,${imageData}`;
+
+        // Upload image to your endpoint
+        console.log(`🚀 Uploading image ${index} to server...`);
+        const uploadResult = await uploadBase64Image(dataUri);
+
+        if (uploadResult.success) {
+          console.log(`✅ Image ${index} uploaded successfully: ${uploadResult.url}`);
+          uploadedUrls.push(uploadResult.url);
+
+          // Store in database with the uploaded URL
+          if (sessionId && messageId) {
+            try {
+              const dbResult = await storeImageInDatabase(
+                sessionId,
+                messageId,
+                description,
+                uploadResult.url, // ✅ This should be the uploaded URL from your endpoint
+                subject,
+                true, // success = true
+                null, // no error
+                lessonId,
+                null // revisedPrompt
+              );
+              console.log(`✅ Image ${index} stored in database with ID: ${dbResult}, URL: ${uploadResult.url}`);
+            } catch (dbError) {
+              console.error(`❌ Failed to store image ${index} in database:`, dbError);
+            }
+          }
+        } else {
+          console.error(`❌ Failed to upload image ${index}:`, uploadResult.error);
+          // Store error in database if database params are provided
+          if (sessionId && messageId) {
+            try {
+              await storeImageInDatabase(
+                sessionId,
+                messageId,
+                description,
+                null, // no URL since upload failed
+                subject,
+                false, // success = false
+                uploadResult.error,
+                lessonId,
+                null
+              );
+            } catch (dbError) {
+              console.error(`❌ Failed to store upload error in database:`, dbError);
+            }
+          }
+        }
+
+        // Save full base64 string to separate file (for debugging)
+        const base64LogPath = path.join("./outputs", `${safeName}-${index}-base64.txt`);
+        await fs.writeFile(base64LogPath, dataUri);
+        console.log(`📄 Full Base64 data URI logged at: ${base64LogPath}`);
+
+        index++;
+      }
+    }
+
+    if (savedFiles.length === 0) {
+      throw new Error("❌ No image data found in Gemini response");
+    }
 
     return {
       success: true,
-      imageUrl,
-      filePath,
-      rawOutput: output,
+      filePaths: savedFiles,
+      uploadedUrls: uploadedUrls,
       originalDescription: description,
     };
   } catch (err) {
     console.error("❌ Generation failed:", err.message || err);
+    
+    // Store error in database if database params are provided
+    if (sessionId && messageId) {
+      try {
+        await storeImageInDatabase(
+          sessionId,
+          messageId,
+          description,
+          null, // no URL since generation failed
+          subject,
+          false, // success = false
+          err.message || err,
+          lessonId,
+          null
+        );
+      } catch (dbError) {
+        console.error(`❌ Failed to store generation error in database:`, dbError);
+      }
+    }
+
     return {
       success: false,
       error: err.message || err,
@@ -233,7 +301,10 @@ const generateDiagram = async (description, imageName = "") => {
   }
 };
 
-// 2. UPDATE: storeImageInDatabase function to include lesson_id
+
+
+
+
 const storeImageInDatabase = async (
   sessionId,
   messageId,
@@ -242,75 +313,98 @@ const storeImageInDatabase = async (
   subject,
   success,
   errorMessage = null,
-  connection = null,
-  lessonId = null // NEW: Add lessonId parameter
+  lessonId = null,
+  revisedPrompt = null
 ) => {
-  let shouldReleaseConnection = false;
-
+  let connection;
   try {
-    // Use provided connection or get new one
-    if (!connection) {
-      connection = await pool.getConnection();
-      shouldReleaseConnection = true;
-    }
+    // 🔍 DEBUG: Log what we received
+    console.log('🔍 DEBUG - storeImageInDatabase received:', {
+      imageUrl: imageUrl,
+      imageUrlType: typeof imageUrl,
+      imageUrlLength: imageUrl ? imageUrl.length : 'null',
+      imageUrlStartsWith: imageUrl ? imageUrl.substring(0, 50) : 'null'
+    });
 
-    // Handle different imageUrl types more safely
-    let actualImageUrl = null;
+    // Get a dedicated connection
+    connection = await pool.getConnection();
 
-    if (imageUrl) {
-      if (typeof imageUrl === "string") {
-        actualImageUrl = imageUrl;
-      } else if (typeof imageUrl === "object") {
-        // Check if it's a ReadableStream or other object
-        if (imageUrl.constructor?.name === "ReadableStream") {
-          console.warn(
-            "⚠️ Cannot store ReadableStream in database, setting to null"
-          );
-          actualImageUrl = null;
-        } else {
-          console.warn(
-            "⚠️ Unknown imageUrl object type:",
-            imageUrl.constructor?.name
-          );
-          actualImageUrl = null;
-        }
-      } else {
-        console.warn("⚠️ Invalid imageUrl type:", typeof imageUrl);
-        actualImageUrl = null;
-      }
-    }
+    // Normalize success for MySQL (boolean → tinyint)
+    const successFlag = success ? 1 : 0;
 
+    // imageUrl is now already the full HTTP URL from your upload endpoint
+    // No need for complex URL processing anymore
+    const actualImageUrl = imageUrl;
+
+    // ✅ Ensure ALL fields are properly typed and not undefined
+    const safeValues = [
+      sessionId != null ? Number(sessionId) : null,           
+      lessonId != null ? Number(lessonId) : null,             
+      messageId != null ? String(messageId) : null,           
+      description != null ? String(description) : null,       
+      actualImageUrl,                                         
+      subject != null ? String(subject) : null,               
+      successFlag,                                            
+      errorMessage != null ? String(errorMessage) : null,     
+      revisedPrompt != null ? String(revisedPrompt) : null    
+    ];
+
+    // Debug log to see what we're inserting
+    console.log("🔍 Safe values for DB insert:", safeValues.map((val, idx) => {
+      const fieldNames = ['session_id', 'lesson_id', 'message_id', 'description', 'image_url', 'subject', 'success', 'error_message', 'revised_prompt'];
+      return {
+        field: fieldNames[idx],
+        index: idx,
+        type: typeof val,
+        isNull: val === null,
+        isUndefined: val === undefined,
+        value: val === null ? 'NULL' : val === undefined ? 'UNDEFINED' : (typeof val === 'string' && val.length > 50 ? val.substring(0, 50) + '...' : val)
+      };
+    }));
+
+    // Insert into DB with explicit connection
     const [result] = await connection.query(
       `INSERT INTO generated_diagrams 
        (session_id, lesson_id, message_id, description, image_url, subject, success, error_message, revised_prompt) 
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        sessionId,
-        lessonId,
-        messageId,
-        description,
-        actualImageUrl, // Use processed URL
-        subject,
-        success,
-        errorMessage,
-        null,
-      ]
+      safeValues
     );
 
     console.log(
-      `✅ Stored diagram in database with ID: ${result.insertId}, lesson_id: ${lessonId}`
+      `✅ Stored diagram in database → ID: ${result.insertId}, lesson_id: ${lessonId}, success: ${success}, image_url: ${actualImageUrl}`
     );
+
     return result.insertId;
+
   } catch (error) {
-    console.error("❌ Error storing image in database:", error);
+    console.error("❌ Error storing image in database:", {
+      error: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage,
+      // Log the problematic values for debugging
+      sessionId: typeof sessionId,
+      lessonId: typeof lessonId,
+      messageId: typeof messageId,
+      description: typeof description,
+      imageUrl: typeof imageUrl,
+      subject: typeof subject,
+      success: typeof success,
+      errorMessage: typeof errorMessage,
+      revisedPrompt: typeof revisedPrompt
+    });
     throw error;
   } finally {
-    // Only release if we created the connection
-    if (shouldReleaseConnection && connection) {
+    if (connection) {
       connection.release();
     }
   }
 };
+
+
+
+
 
 // Enhanced function to process lesson content with better image handling
 const processLessonContent = async (
@@ -319,7 +413,7 @@ const processLessonContent = async (
   sessionId = null,
   messageId = null,
   connection = null,
-  lessonId = null // Keep lessonId for cache check
+  lessonId = null
 ) => {
   let localConnection = null;
   let shouldReleaseConnection = false;
@@ -330,19 +424,13 @@ const processLessonContent = async (
     console.log("📜 Subject received:", subject);
     console.log("🎯 Lesson ID:", lessonId);
 
-    // Get a fresh connection if none provided or if the provided one is closed
-    if (!connection) {
+    // ✅ Use caller’s connection or open a new one
+    if (connection) {
+      localConnection = connection;
+      shouldReleaseConnection = false;
+    } else {
       localConnection = await pool.getConnection();
       shouldReleaseConnection = true;
-    } else {
-      try {
-        await connection.query("SELECT 1");
-        localConnection = connection;
-      } catch (connError) {
-        console.warn("⚠️ Provided connection is closed, getting new one");
-        localConnection = await pool.getConnection();
-        shouldReleaseConnection = true;
-      }
     }
 
     const inlinePattern = /\[CreateVisual:\s*["'](.+?)["']\]/g;
@@ -351,20 +439,15 @@ const processLessonContent = async (
     let processedContent = content;
     const allMatches = [];
 
-    console.log("🔍 Starting visual processing...");
-    console.log(`📝 Original subject: ${subject}`);
-
     // Inline matches
     for (const match of content.matchAll(inlinePattern)) {
       let description = match[1].trim().replace(/\s+/g, " ");
       allMatches.push({ fullMatch: match[0], description, subject });
-      console.log(`✅ Found inline visual: "${description}"`);
     }
 
     // Block matches
     for (const match of content.matchAll(blockPattern)) {
       const block = match[1].trim();
-
       const subjectMatch = block.match(/Subject:\s*{?([^};\n]+)}?/i);
       const topicMatch = block.match(/Topic:\s*{?([^};\n]+)}?/i);
       const focusMatch = block.match(/Focus:\s*{?([^};\n]+)}?/i);
@@ -378,131 +461,110 @@ const processLessonContent = async (
       let subjectOverride = subjectMatch ? subjectMatch[1].trim() : null;
 
       if (description) {
-        description = description.replace(/\s+/g, " ");
         const finalSubject = subjectOverride || subject;
         allMatches.push({
           fullMatch: match[0],
-          description,
+          description: description.replace(/\s+/g, " "),
           subject: finalSubject,
         });
-        console.log(
-          `🧾 Parsed block visual: Subject="${finalSubject}", Description="${description}"`
-        );
       }
     }
 
     console.log(`🧪 Total visuals to generate: ${allMatches.length}`);
 
-    // Process visuals
-    for (const {
-      fullMatch,
-      description,
-      subject: effectiveSubject,
-    } of allMatches) {
+    for (const { fullMatch, description, subject: effectiveSubject } of allMatches) {
       console.log(
         `🎯 Handling diagram for: "${description}" [Subject: ${effectiveSubject}, Lesson: ${lessonId}]`
       );
 
       let diagramResult;
-      let diagramId = null;
+      let diagramIds = [];
+      let diagramUrls = [];
 
-      // ✅ Only lessonId-based cache check
+      // ✅ Cache check
       if (localConnection && lessonId) {
         try {
-          const [rows] = await connection.query(
+          const [rows] = await localConnection.query(
             `SELECT id, image_url
-           FROM generated_diagrams
-           WHERE lesson_id = ? AND description = ? AND success = 1
-           ORDER BY generation_time DESC LIMIT 1`,
+             FROM generated_diagrams
+             WHERE lesson_id = ? AND description = ? AND success = 1
+             ORDER BY generation_time DESC`,
             [lessonId, description]
           );
 
           if (rows.length > 0) {
-            const existing = rows[0];
             console.log(
-              `📂 Image found in lesson cache: Lesson=${lessonId}, ID=${existing.id}`
+              `📂 Found ${rows.length} cached images for Lesson=${lessonId}, using existing.`
             );
-            diagramResult = { success: true, imageUrl: existing.image_url };
-            diagramId = existing.id;
-          } else {
-            console.log(
-              `🔎 No existing image found for Lesson=${lessonId}, will generate new one.`
-            );
+            diagramResult = { success: true };
+            diagramIds = rows.map(r => r.id);
+            diagramUrls = rows.map(r => r.image_url);
           }
         } catch (cacheError) {
           console.warn("⚠️ Lesson cache check failed:", cacheError.message);
         }
       }
 
-      // 🖼️ Generate if no existing image
+      // Generate new if no cache
       if (!diagramResult) {
-        console.log(`⚙️ Generating new diagram for "${description}"`);
+        console.log(`⚙️ Generating new diagram(s) for "${description}"`);
         diagramResult = await generateDiagram(description, effectiveSubject);
 
         if (diagramResult.success && sessionId && localConnection) {
-          try {
-            if (
-              !diagramResult.imageUrl ||
-              typeof diagramResult.imageUrl !== "string"
-            ) {
-              console.warn(
-                "⚠️ Invalid imageUrl format:",
-                typeof diagramResult.imageUrl
+          for (const [idx, uploadedUrl] of diagramResult.uploadedUrls.entries()) {
+            try {
+              const id = await storeImageInDatabase(
+                sessionId,
+                messageId || null,
+                description,
+                uploadedUrl,
+                effectiveSubject,
+                true,
+                null,
+                lessonId,
+                null
               );
-              diagramResult.imageUrl = null;
+              diagramIds.push(id);
+              diagramUrls.push(uploadedUrl);
+              console.log(
+                `💾 Stored new diagram in DB: ID=${id}, Lesson=${lessonId}, URL=${uploadedUrl}`
+              );
+            } catch (dbError) {
+              console.warn("⚠️ DB Store Error:", dbError.message);
             }
-
-            diagramId = await storeImageInDatabase(
-              sessionId,
-              messageId || null,
-              description,
-              diagramResult.imageUrl,
-              effectiveSubject,
-              true,
-              null,
-              localConnection,
-              lessonId
-            );
-            console.log(
-              `💾 Stored new diagram in DB: ID=${diagramId}, Lesson=${lessonId}`
-            );
-          } catch (dbError) {
-            console.warn("⚠️ DB Store Error:", dbError.message);
           }
         }
       }
 
-      // Replace placeholder with diagram
+      // Replace placeholders
       if (diagramResult?.success) {
-        const imageHtml = `
-        <div class="lesson-diagram" 
-             style="margin: 20px 0; text-align: center; border: 2px solid #e0e0e0; border-radius: 12px; padding: 15px; background: #f9f9f9;" 
-             data-diagram-id="${diagramId}" 
-             data-lesson-id="${lessonId}"
-             data-description="${description.replace(/"/g, "&quot;")}"
-             data-subject="${effectiveSubject}">
-          <h4 style="color: #333; margin-bottom: 10px; font-size: 16px;">${description}</h4>
-          <img src="${diagramResult.imageUrl}" 
-               alt="Educational diagram: ${description}" 
-               style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"
-               onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-          <div style="display: none; padding: 20px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; color: #721c24;">
-            <p style="margin: 0; font-weight: bold;">📊 Diagram: ${description}</p>
-            <p style="margin: 5px 0 0 0; font-size: 12px;">Image could not be loaded</p>
-          </div>
-          <p style="font-style: italic; color: #666; margin-top: 10px; font-size: 12px;">
-            Subject: ${
-              effectiveSubject.charAt(0).toUpperCase() +
-              effectiveSubject.slice(1)
-            } | 
-            Labels: A, B, C, D, E, F, G, H, I, J (as applicable)
-          </p>
-        </div>`;
+        let diagramsHtml = "";
 
-        processedContent = processedContent.replace(fullMatch, imageHtml);
-        console.log(
-          `✅ Inserted diagram for: ${description} (Lesson: ${lessonId})`
-        );
+        diagramUrls.forEach((url, idx) => {
+          diagramsHtml += `
+          <div class="lesson-diagram" 
+               style="margin: 20px 0; text-align: center; border: 2px solid #e0e0e0; border-radius: 12px; padding: 15px; background: #f9f9f9;" 
+               data-diagram-id="${diagramIds[idx] || ""}" 
+               data-lesson-id="${lessonId}"
+               data-description="${description.replace(/"/g, "&quot;")}"
+               data-subject="${effectiveSubject}">
+            <h4 style="color: #333; margin-bottom: 10px; font-size: 16px;">${description} (${idx + 1})</h4>
+            <img src="${url}" 
+                 alt="Educational diagram: ${description}" 
+                 style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"
+                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
+            <div style="display: none; padding: 20px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; color: #721c24;">
+              <p style="margin: 0; font-weight: bold;">📊 Diagram: ${description}</p>
+              <p style="margin: 5px 0 0 0; font-size: 12px;">Image could not be loaded</p>
+            </div>
+            <p style="font-style: italic; color: #666; margin-top: 10px; font-size: 12px;">
+              Subject: ${effectiveSubject.charAt(0).toUpperCase() + effectiveSubject.slice(1)}
+            </p>
+          </div>`;
+        });
+
+        processedContent = processedContent.replace(fullMatch, diagramsHtml);
+        console.log(`✅ Inserted ${diagramUrls.length} diagram(s) for: ${description}`);
       }
     }
 
@@ -514,13 +576,18 @@ const processLessonContent = async (
     if (shouldReleaseConnection && localConnection) {
       try {
         localConnection.release();
-        console.log("🔌 Released local database connection");
+        console.log("🔌 Released local database connection (internal)");
       } catch (releaseError) {
-        console.warn("⚠️ Error releasing connection:", releaseError.message);
+        console.warn("⚠️ Error releasing local connection:", releaseError.message);
       }
+    } else {
+      console.log("🔄 Skipped releasing connection (external one still in use)");
     }
   }
 };
+
+
+
 
 // Check if database columns exist
 const checkDatabaseColumns = async (connection) => {
@@ -648,22 +715,22 @@ const initializeDatabase = async () => {
     }
 
     // 5. Create image_cache table for better persistence
-    await connection.query(`
-      CREATE TABLE IF NOT EXISTS image_cache (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        original_url VARCHAR(1000) NOT NULL,
-        cached_url VARCHAR(1000),
-        description TEXT,
-        subject VARCHAR(50),
-        file_size INT,
-        mime_type VARCHAR(50),
-        cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-        access_count INT DEFAULT 0,
-        is_valid BOOLEAN DEFAULT TRUE,
-        UNIQUE KEY unique_original_url (original_url(255))
-      ) ENGINE=InnoDB
-    `);
+    // await connection.query(`
+    //   CREATE TABLE IF NOT EXISTS image_cache (
+    //     id INT AUTO_INCREMENT PRIMARY KEY,
+    //     original_url VARCHAR(1000) NOT NULL,
+    //     cached_url VARCHAR(1000),
+    //     description TEXT,
+    //     subject VARCHAR(50),
+    //     file_size INT,
+    //     mime_type VARCHAR(50),
+    //     cached_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    //     last_accessed TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    //     access_count INT DEFAULT 0,
+    //     is_valid BOOLEAN DEFAULT TRUE,
+    //     UNIQUE KEY unique_original_url (original_url(255))
+    //   ) ENGINE=InnoDB
+    // `);
 
     // 6. Create lesson_data table with all columns including diagrams_generated
     await connection.query(`
@@ -790,7 +857,6 @@ const initializeDatabase = async () => {
 // Call initialization when module loads
 initializeDatabase().catch(console.error);
 
-// Enhanced startLesson function with better image handling
 const startLesson = async (req, res) => {
   let connection;
   try {
@@ -808,7 +874,7 @@ const startLesson = async (req, res) => {
       lesson_id,
     } = req.body;
 
-    // Get connection early and keep it throughout the function
+    // Get connection early
     connection = await pool.getConnection();
 
     // Basic validation
@@ -826,7 +892,7 @@ const startLesson = async (req, res) => {
         .json({ success: false, error: "Missing required fields" });
     }
 
-    console.log("Starting lesson for:", {
+    console.log("📚 Starting lesson for:", {
       student_name,
       subject,
       lesson_topic,
@@ -835,25 +901,22 @@ const startLesson = async (req, res) => {
 
     // Normalize subject
     const normalizedSubject = subject.trim().toLowerCase();
-    console.log(
-      `Received subject: ${subject}, normalized: ${normalizedSubject}, lesson_id: ${lesson_id}`
-    );
 
-    // Use original subject directly to fetch prompt dynamically
+    // Fetch system prompt dynamically
     let systemPrompt;
     try {
       const promptType = type?.trim() || "lesson";
       systemPrompt = await fetchPromptFromAPI(subject.trim(), promptType);
-      console.log("Successfully fetched prompt from API for type:", promptType);
+      console.log("✅ Successfully fetched prompt:", promptType);
     } catch (error) {
-      console.error("Error fetching prompt from API:", error);
+      console.error("❌ Error fetching prompt from API:", error.message);
       return res.status(500).json({
         success: false,
         error: `Failed to fetch prompt for subject: ${subject} and type: ${type}`,
       });
     }
 
-    // Helper: convert JS Date or ISO string to MySQL DATETIME
+    // Helper: Date → MySQL DATETIME
     const toMySQLDateTime = (date) => {
       if (!date) return null;
       const d = new Date(date);
@@ -861,10 +924,10 @@ const startLesson = async (req, res) => {
       return d.toISOString().slice(0, 19).replace("T", " ");
     };
 
-    // Check database columns availability
+    // Check DB columns
     const columnCheck = await checkDatabaseColumns(connection);
 
-    // Check if session exists
+    // Check existing session
     const [existingSessions] = await connection.query(
       `SELECT id FROM tutoring_sessions 
        WHERE student_id = ? 
@@ -886,12 +949,12 @@ const startLesson = async (req, res) => {
     let sessionId;
     if (existingSessions.length > 0) {
       sessionId = existingSessions[0].id;
-      console.log(`Using existing session ID: ${sessionId}`);
+      console.log(`🔄 Using existing session ID: ${sessionId}`);
 
-      // Only insert the latest message for existing sessions if it has valid content
+      // Insert latest message only
       if (messages.length > 0) {
         const latestMessage = messages[messages.length - 1];
-        if (latestMessage.content && latestMessage.content.trim().length > 0) {
+        if (latestMessage.content?.trim()) {
           await connection.query(
             `INSERT INTO session_messages 
              (session_id, role, content, timestamp, message_id, student_id) 
@@ -905,7 +968,7 @@ const startLesson = async (req, res) => {
               student_id,
             ]
           );
-          console.log(`Inserted 1 new message for session ${sessionId}`);
+          console.log(`💬 Inserted latest message for session ${sessionId}`);
         }
       }
     } else {
@@ -927,12 +990,12 @@ const startLesson = async (req, res) => {
         ]
       );
       sessionId = result.insertId;
-      console.log(`Created new session with ID: ${sessionId}`);
+      console.log(`🆕 Created new session ID: ${sessionId}`);
 
-      // Insert all initial messages for new session with valid content
+      // Insert initial messages
       if (messages.length > 0) {
         const messageValues = messages
-          .filter((msg) => msg.content && msg.content.trim().length > 0)
+          .filter((msg) => msg.content?.trim())
           .map((msg) => [
             sessionId,
             msg.role,
@@ -949,7 +1012,7 @@ const startLesson = async (req, res) => {
              VALUES ?`,
             [messageValues]
           );
-          console.log(`Inserted ${messageValues.length} initial messages`);
+          console.log(`💬 Inserted ${messageValues.length} initial messages`);
         }
       }
     }
@@ -966,73 +1029,68 @@ const startLesson = async (req, res) => {
       student_previous_summary,
     };
 
-    // Filter out any messages with empty/null content
-    const validMessages = messages.filter(
-      (msg) => msg.content !== undefined && msg.content !== null
-    );
-
-    const chatHistory = [
-      { role: "system", content: systemPrompt },
-      ...validMessages.map((msg) => ({
-        role: msg.role,
-        content: msg.content,
-      })),
-      {
-        role: "user",
-        content: JSON.stringify({
-          ...userLessonInput,
-          student_response: messages[messages.length - 1]?.content || "",
-        }),
-      },
-    ];
-
-    const payload = {
-      model: "gpt-4.1",
-      messages: chatHistory,
+    // Set up Gemini config
+    const generationConfig = {
+      maxOutputTokens: 65535,
       temperature: 1,
-      max_tokens: 4096,
+      topP: 0.95,
+      seed: 0,
+      safetySettings: [
+        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
+        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "OFF" },
+        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "OFF" },
+        { category: "HARM_CATEGORY_HARASSMENT", threshold: "OFF" },
+      ],
+      systemInstruction: { parts: [{ text: systemPrompt }] },
     };
 
-    console.log("Sending request to OpenAI...");
-    const openaiResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-      }
-    );
+    const chat = ai.chats.create({ model, config: generationConfig });
+    console.log("🤖 Chat session created with Gemini AI");
 
-    let assistantContent = openaiResponse.data.choices?.[0]?.message?.content;
+    const messageContent = JSON.stringify({
+      ...userLessonInput,
+      student_response: messages[messages.length - 1]?.content || "",
+    });
+
+    console.log("📤 Sending message to Gemini:", messageContent);
+
+    // Request Gemini response (non-streaming)
+    const response = await chat.sendMessage({ message: { text: messageContent } });
+
+    // 🚨 Log the full response for debugging
+    console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
+
+    // ✅ Extract assistant text safely
+    let assistantContent =
+      response?.output_text ||
+      response?.candidates?.[0]?.content?.parts
+        ?.map((p) => p.text || "")
+        .join("\n") ||
+      "";
+
+    console.log("📥 Extracted assistantContent:", assistantContent);
+
     let processedContent = assistantContent;
     let hasVisuals = false;
-
-    // Generate message ID for this response
     const messageId = Date.now().toString();
 
-    // Check if the response contains visual requests and process them
-    if (
-      assistantContent &&
-      (assistantContent.includes("[CreateVisual:") ||
-        assistantContent.includes("CreateVisual:"))
-    ) {
-      console.log("Processing visual content...");
+    // Handle visuals if present
+    if (assistantContent?.includes("CreateVisual:")) {
+      console.log("🎨 Processing visual content...");
       hasVisuals = true;
 
-      // UPDATED: Pass lesson_id to processLessonContent
-      processedContent = await processLessonContent(
-        assistantContent,
-        normalizedSubject,
-        sessionId,
-        messageId,
-        connection,
-        lesson_id
-      );
+    processedContent = await processLessonContent(
+  assistantContent,
+  normalizedSubject,
+  sessionId,
+  messageId,
+  connection, // ✅ reuse the same connection
+  lesson_id
+);
+
     }
 
-    // Store the assistant's response if it has valid content
+    // Save assistant message
     if (assistantContent) {
       const assistantMessage = {
         role: "assistant",
@@ -1043,7 +1101,8 @@ const startLesson = async (req, res) => {
         id: messageId,
       };
 
-      // Build insert query dynamically based on available columns
+      console.log("📝 Saving assistant message:", assistantMessage);
+
       let insertQuery = `INSERT INTO session_messages (session_id, role, content, timestamp, message_id, student_id`;
       let insertValues = [
         sessionId,
@@ -1058,49 +1117,45 @@ const startLesson = async (req, res) => {
         insertQuery += `, processed_content`;
         insertValues.push(assistantMessage.processed_content);
       }
-
       if (columnCheck.hasVisuals) {
         insertQuery += `, has_visuals`;
         insertValues.push(assistantMessage.has_visuals);
       }
 
+      // 🔎 Optionally store raw Gemini JSON for debugging (if your DB schema allows)
+      if (columnCheck.hasRawResponse) {
+        insertQuery += `, raw_response`;
+        insertValues.push(JSON.stringify(response));
+      }
+
       insertQuery += `) VALUES (?, ?, ?, ?, ?, ?`;
       if (columnCheck.hasProcessedContent) insertQuery += `, ?`;
       if (columnCheck.hasVisuals) insertQuery += `, ?`;
+      if (columnCheck.hasRawResponse) insertQuery += `, ?`;
       insertQuery += `)`;
 
       await connection.query(insertQuery, insertValues);
+    } else {
+      console.warn("⚠️ No assistant content returned from Gemini");
     }
 
-    // Return the processed content to the frontend
-    const responseData = {
-      ...openaiResponse.data,
-      choices: [
-        {
-          ...openaiResponse.data.choices[0],
-          message: {
-            ...openaiResponse.data.choices[0].message,
-            content: processedContent,
-          },
-        },
-      ],
+    // Final JSON response
+    const finalResponse = {
+      success: true,
+      sessionId,
+      hasVisuals,
+      lesson_id,
+      data: {
+        choices: [{ message: { role: "assistant", content: processedContent } }],
+      },
     };
 
-    res.json({
-      success: true,
-      data: responseData,
-      sessionId: sessionId,
-      hasVisuals: hasVisuals,
-      lesson_id: lesson_id,
-    });
-  } catch (error) {
-    console.error("Lesson Error:", {
-      message: error.message,
-      stack: error.stack,
-      response: error.response?.data,
-    });
+    console.log("📤 Final API Response to frontend:", finalResponse);
 
-    res.status(500).json({
+    return res.json(finalResponse);
+  } catch (error) {
+    console.error("❌ Lesson Error:", error);
+    return res.status(500).json({
       success: false,
       error:
         error.response?.data?.error?.message ||
@@ -1108,12 +1163,20 @@ const startLesson = async (req, res) => {
         "Internal Server Error",
     });
   } finally {
-    // Always release the connection in the finally block
     if (connection) {
-      connection.release();
+      try {
+        connection.release();
+      } catch (e) {
+        console.warn("⚠️ Tried releasing connection twice");
+      }
     }
   }
 };
+
+
+
+
+
 
 // Add function to get lesson history
 const getLessonHistory = async (req, res) => {
@@ -1340,33 +1403,11 @@ const saveLessonData = async (req, res) => {
   }
 };
 
-// Add endpoint to generate individual diagrams (for testing)
-const generateDiagramEndpoint = async (req, res) => {
-  try {
-    const { description, subject = "biology" } = req.body;
 
-    if (!description) {
-      return res.status(400).json({
-        success: false,
-        error: "Description is required",
-      });
-    }
-
-    const result = await generateDiagram(description, subject);
-    res.json(result);
-  } catch (error) {
-    console.error("Generate Diagram Error:", error);
-    res.status(500).json({
-      success: false,
-      error: error.message || "Internal Server Error",
-    });
-  }
-};
 
 module.exports = {
   startLesson,
   getLessonHistory,
   saveLessonData,
-  generateDiagramEndpoint,
   generateDiagram,
 };
