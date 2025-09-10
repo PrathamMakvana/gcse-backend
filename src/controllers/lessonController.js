@@ -20,7 +20,7 @@ const pool = mysql.createPool({
 });
 
 // ✅ Prompt API
-const PROMPT_API_URL = "https://node.tutoh.ai/api/get-prompt/";
+const PROMPT_API_URL = "https://thinkdream.in/GCSE/api/get-prompt/";
 console.log(
   "=============> process.env.GOOGLE_API_KEY =================>" +
     process.env.GOOGLE_API_KEY
@@ -45,18 +45,6 @@ const fetchPromptFromAPI = async (subject, type) => {
     throw error;
   }
 };
-
-process.env.GOOGLE_APPLICATION_CREDENTIALS = path.join(
-  __dirname,
-  "freeze-app-ed1c8a99cf24.json"
-);
-
-const ai = new GoogleGenAI({
-  project: "freeze-app",
-  location: "us-central1",
-});
-
-const model = "gemini-2.5-pro";
 
 const fetch =
   global.fetch ||
@@ -162,7 +150,9 @@ const generateDiagram = async (
 
     console.log("🧠 Generating with Gemini Nano AI, prompt:", description);
 
-    const ai = new GoogleGenAI({});
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GOOGLE_CLOUD_API_KEY,
+    });
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash-image-preview",
@@ -917,6 +907,11 @@ const initializeDatabase = async () => {
 // Call initialization when module loads
 initializeDatabase().catch(console.error);
 
+const ai = new GoogleGenAI({
+  apiKey: process.env.GOOGLE_CLOUD_API_KEY,
+});
+const model = "gemini-2.5-pro";
+
 const startLesson = async (req, res) => {
   let connection;
   try {
@@ -1104,6 +1099,13 @@ const startLesson = async (req, res) => {
       systemInstruction: { parts: [{ text: systemPrompt }] },
     };
 
+    // 🔑 Initialize GoogleGenAI with API key
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GOOGLE_CLOUD_API_KEY, // must be set in env
+    });
+
+    const model = "gemini-2.5-pro"; // 🔑 define model explicitly
+
     const chat = ai.chats.create({ model, config: generationConfig });
     console.log("🤖 Chat session created with Gemini AI");
 
@@ -1164,7 +1166,8 @@ const startLesson = async (req, res) => {
 
       console.log("📝 Saving assistant message:", assistantMessage);
 
-      let insertQuery = `INSERT INTO session_messages (session_id, role, content, timestamp, message_id, student_id`;
+      let insertQuery =
+        "INSERT INTO session_messages (session_id, role, content, timestamp, message_id, student_id";
       let insertValues = [
         sessionId,
         assistantMessage.role,
@@ -1175,29 +1178,29 @@ const startLesson = async (req, res) => {
       ];
 
       if (columnCheck.hasProcessedContent) {
-        insertQuery += `, processed_content`;
+        insertQuery += ", processed_content";
         insertValues.push(assistantMessage.processed_content);
       }
       if (columnCheck.hasVisuals) {
-        insertQuery += `, has_visuals`;
+        insertQuery += ", has_visuals";
         insertValues.push(assistantMessage.has_visuals);
       }
 
       // 🔎 Optionally store raw Gemini JSON for debugging (if your DB schema allows)
       if (columnCheck.hasRawResponse) {
-        insertQuery += `, raw_response`;
+        insertQuery += ", raw_response";
         insertValues.push(JSON.stringify(response));
       }
 
-      insertQuery += `) VALUES (?, ?, ?, ?, ?, ?`;
-      if (columnCheck.hasProcessedContent) insertQuery += `, ?`;
-      if (columnCheck.hasVisuals) insertQuery += `, ?`;
-      if (columnCheck.hasRawResponse) insertQuery += `, ?`;
-      insertQuery += `)`;
+      insertQuery += ") VALUES (?, ?, ?, ?, ?, ?";
+      if (columnCheck.hasProcessedContent) insertQuery += ", ?";
+      if (columnCheck.hasVisuals) insertQuery += ", ?";
+      if (columnCheck.hasRawResponse) insertQuery += ", ?";
+      insertQuery += ")";
 
       await connection.query(insertQuery, insertValues);
     } else {
-      console.warn("⚠️ No assistant content returned from Gemini");
+      console.warn("⚠ No assistant content returned from Gemini");
     }
 
     // Final JSON response
@@ -1230,7 +1233,7 @@ const startLesson = async (req, res) => {
       try {
         connection.release();
       } catch (e) {
-        console.warn("⚠️ Tried releasing connection twice");
+        console.warn("⚠ Tried releasing connection twice");
       }
     }
   }
@@ -1378,8 +1381,8 @@ const saveLessonData = async (req, res) => {
       return d.toISOString().slice(0, 19).replace("T", " ");
     };
 
-    // Prepare the data for insertion
-    const insertData = {
+    // Prepare the data
+    const apiData = {
       session_id: lessonData.session_id || null,
       student_id: lessonData.student_id,
       student_name: lessonData.student_name,
@@ -1437,17 +1440,60 @@ const saveLessonData = async (req, res) => {
       diagrams_generated: diagramCount,
     };
 
-    // Insert into DB
-    const [result] = await connection.query(`INSERT INTO lesson_data SET ?`, [
-      insertData,
-    ]);
+    let apiResult = null;
+    let usedFallback = false;
+
+    try {
+      console.log("📤 Attempting to save via API...");
+
+      const apiResponse = await fetch(
+        "https://thinkdream.in/GCSE/api/lesson-data",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(apiData),
+          signal: AbortSignal.timeout(30000),
+        }
+      );
+
+      if (!apiResponse.ok) {
+        const responseText = await apiResponse.text();
+        console.log("❌ API Error Response:", responseText);
+        throw new Error(`API request failed with status ${apiResponse.status}`);
+      }
+
+      const responseText = await apiResponse.text();
+      apiResult = JSON.parse(responseText);
+      console.log("✅ Successfully saved via API");
+    } catch (apiError) {
+      console.warn(
+        "⚠️ API failed, falling back to direct database insert:",
+        apiError.message
+      );
+      usedFallback = true;
+
+      // Fallback to direct database insert
+      const [result] = await connection.query(`INSERT INTO lesson_data SET ?`, [
+        apiData,
+      ]);
+
+      apiResult = {
+        id: result.insertId,
+        message: "Saved via database fallback",
+      };
+      console.log("✅ Successfully saved via database fallback");
+    }
 
     res.json({
       success: true,
       data: {
-        data: insertData,
-        id: result.insertId,
+        data: apiData,
+        id: apiResult.id || apiResult.data?.id,
         diagrams_generated: diagramCount,
+        api_response: apiResult,
+        used_fallback: usedFallback,
       },
     });
   } catch (error) {
