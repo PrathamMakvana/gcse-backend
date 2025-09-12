@@ -4,10 +4,7 @@ const path = require("path");
 const { VertexAI } = require("@google-cloud/vertexai");
 const fs = require("fs/promises");
 const { GoogleGenAI } = require("@google/genai");
-const { GoogleGenerativeAI } = require("@google/generative-ai"); 
-
-
-
+const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 // ✅ Create MySQL pool
 const pool = mysql.createPool({
@@ -23,7 +20,10 @@ const pool = mysql.createPool({
 
 // ✅ Prompt API
 const PROMPT_API_URL = `${process.env.BASE_URL}/get-prompt/`;
-console.log("=============> process.env.BASE_URL =================>" + process.env.BASE_URL);
+console.log(
+  "=============> process.env.BASE_URL =================>" +
+    process.env.BASE_URL
+);
 console.log(
   "=============> process.env.GOOGLE_API_KEY =================>" +
     process.env.GOOGLE_API_KEY
@@ -49,10 +49,8 @@ const fetchPromptFromAPI = async (subject, type) => {
   }
 };
 
-
-
-
-process.env.GOOGLE_APPLICATION_CREDENTIALS = path.join(__dirname, '../../tutoh-466212-ce837e371aa6.json');
+process.env.GOOGLE_APPLICATION_CREDENTIALS =
+  "/cred/tutoh-466212-ce837e371aa6.json";
 
 const PROJECT_ID = "tutoh-466212";
 const LOCATION = "us-central1";
@@ -63,18 +61,10 @@ const vertexAI = new VertexAI({
   location: LOCATION,
 });
 
-
-
-
-
-
-
 const fetch =
   global.fetch ||
   ((...args) =>
     import("node-fetch").then(({ default: fetch }) => fetch(...args)));
-
-
 
 // Ensure outputs directory exists
 const ensureOutputDir = async (dir = "./outputs") => {
@@ -91,20 +81,30 @@ const sanitizeFilename = (name) => {
   return name.replace(/[<>:"/\\|?*\n\r\t]/g, "_").slice(0, 150);
 };
 
-
 // Helper to detect MIME type from buffer
 const detectMimeType = (buffer) => {
   if (!buffer || buffer.length < 12) return "application/octet-stream";
 
   // PNG magic number: 89 50 4E 47 0D 0A 1A 0A
-  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) {
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
     return "image/png";
   }
 
   // WEBP magic number: "RIFF"...."WEBP"
   if (
-    buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 &&
-    buffer[8] === 0x57 && buffer[9] === 0x45 && buffer[10] === 0x42 && buffer[11] === 0x50
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
   ) {
     return "image/webp";
   }
@@ -112,51 +112,52 @@ const detectMimeType = (buffer) => {
   return "application/octet-stream";
 };
 
-
-
-
-
 // Helper function to upload base64 image to your endpoint
 const uploadBase64Image = async (base64DataUri) => {
   try {
-    const response = await fetch(`${process.env.BASE_URL}/upload-base64-image`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        image: base64DataUri
-      })
-    });
+    const response = await fetch(
+      `${process.env.BASE_URL}/upload-base64-image`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          image: base64DataUri,
+        }),
+      }
+    );
 
     if (!response.ok) {
       throw new Error(`Upload failed with status: ${response.status}`);
     }
 
     const result = await response.json();
-    console.log('✅ Image uploaded successfully:', result);
-    
+    console.log("✅ Image uploaded successfully:", result);
+
     return {
       success: true,
       url: result.url,
       fileName: result.file_name,
-      message: result.message
+      message: result.message,
     };
   } catch (error) {
-    console.error('❌ Error uploading image:', error);
+    console.error("❌ Error uploading image:", error);
     return {
       success: false,
-      error: error.message
+      error: error.message,
     };
   }
 };
 
-
-
-
-
-
-const generateDiagram = async (description, imageName = "", sessionId = null, lessonId = null, messageId = null, subject = null) => {
+const generateDiagram = async (
+  description,
+  imageName = "",
+  sessionId = null,
+  lessonId = null,
+  messageId = null,
+  subject = null
+) => {
   try {
     if (!description || description.trim().length === 0) {
       throw new Error("❌ Description is required to generate a diagram");
@@ -164,8 +165,8 @@ const generateDiagram = async (description, imageName = "", sessionId = null, le
 
     console.log("🧠 Generating with Gemini Nano AI, prompt:", description);
 
-      const ai = new GoogleGenAI({
-      apiKey: process.env.GOOGLE_CLOUD_API_KEY, 
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GOOGLE_CLOUD_API_KEY,
     });
 
     const response = await ai.models.generateContent({
@@ -207,7 +208,12 @@ const generateDiagram = async (description, imageName = "", sessionId = null, le
         console.log("🧾 Detected MIME type:", mimeType);
 
         // Save image file locally (optional - for backup)
-        const ext = mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "bin";
+        const ext =
+          mimeType === "image/png"
+            ? "png"
+            : mimeType === "image/webp"
+            ? "webp"
+            : "bin";
         const filePath = path.join("./outputs", `${safeName}-${index}.${ext}`);
         await fs.writeFile(filePath, buffer);
         console.log(`✅ Image saved locally at: ${filePath}`);
@@ -221,7 +227,9 @@ const generateDiagram = async (description, imageName = "", sessionId = null, le
         const uploadResult = await uploadBase64Image(dataUri);
 
         if (uploadResult.success) {
-          console.log(`✅ Image ${index} uploaded successfully: ${uploadResult.url}`);
+          console.log(
+            `✅ Image ${index} uploaded successfully: ${uploadResult.url}`
+          );
           uploadedUrls.push(uploadResult.url);
 
           // Store in database with the uploaded URL
@@ -238,13 +246,21 @@ const generateDiagram = async (description, imageName = "", sessionId = null, le
                 lessonId,
                 null // revisedPrompt
               );
-              console.log(`✅ Image ${index} stored in database with ID: ${dbResult}, URL: ${uploadResult.url}`);
+              console.log(
+                `✅ Image ${index} stored in database with ID: ${dbResult}, URL: ${uploadResult.url}`
+              );
             } catch (dbError) {
-              console.error(`❌ Failed to store image ${index} in database:`, dbError);
+              console.error(
+                `❌ Failed to store image ${index} in database:`,
+                dbError
+              );
             }
           }
         } else {
-          console.error(`❌ Failed to upload image ${index}:`, uploadResult.error);
+          console.error(
+            `❌ Failed to upload image ${index}:`,
+            uploadResult.error
+          );
           // Store error in database if database params are provided
           if (sessionId && messageId) {
             try {
@@ -260,13 +276,19 @@ const generateDiagram = async (description, imageName = "", sessionId = null, le
                 null
               );
             } catch (dbError) {
-              console.error(`❌ Failed to store upload error in database:`, dbError);
+              console.error(
+                `❌ Failed to store upload error in database:`,
+                dbError
+              );
             }
           }
         }
 
         // Save full base64 string to separate file (for debugging)
-        const base64LogPath = path.join("./outputs", `${safeName}-${index}-base64.txt`);
+        const base64LogPath = path.join(
+          "./outputs",
+          `${safeName}-${index}-base64.txt`
+        );
         await fs.writeFile(base64LogPath, dataUri);
         console.log(`📄 Full Base64 data URI logged at: ${base64LogPath}`);
 
@@ -286,7 +308,7 @@ const generateDiagram = async (description, imageName = "", sessionId = null, le
     };
   } catch (err) {
     console.error("❌ Generation failed:", err.message || err);
-    
+
     // Store error in database if database params are provided
     if (sessionId && messageId) {
       try {
@@ -302,7 +324,10 @@ const generateDiagram = async (description, imageName = "", sessionId = null, le
           null
         );
       } catch (dbError) {
-        console.error(`❌ Failed to store generation error in database:`, dbError);
+        console.error(
+          `❌ Failed to store generation error in database:`,
+          dbError
+        );
       }
     }
 
@@ -313,12 +338,6 @@ const generateDiagram = async (description, imageName = "", sessionId = null, le
     };
   }
 };
-
-
-
-
-
-
 
 const storeImageInDatabase = async (
   sessionId,
@@ -334,11 +353,11 @@ const storeImageInDatabase = async (
   let connection;
   try {
     // 🔍 DEBUG: Log what we received
-    console.log('🔍 DEBUG - storeImageInDatabase received:', {
+    console.log("🔍 DEBUG - storeImageInDatabase received:", {
       imageUrl: imageUrl,
       imageUrlType: typeof imageUrl,
-      imageUrlLength: imageUrl ? imageUrl.length : 'null',
-      imageUrlStartsWith: imageUrl ? imageUrl.substring(0, 50) : 'null'
+      imageUrlLength: imageUrl ? imageUrl.length : "null",
+      imageUrlStartsWith: imageUrl ? imageUrl.substring(0, 50) : "null",
     });
 
     // Get a dedicated connection
@@ -353,29 +372,49 @@ const storeImageInDatabase = async (
 
     // ✅ Ensure ALL fields are properly typed and not undefined
     const safeValues = [
-      sessionId != null ? Number(sessionId) : null,           
-      lessonId != null ? Number(lessonId) : null,             
-      messageId != null ? String(messageId) : null,           
-      description != null ? String(description) : null,       
-      actualImageUrl,                                         
-      subject != null ? String(subject) : null,               
-      successFlag,                                            
-      errorMessage != null ? String(errorMessage) : null,     
-      revisedPrompt != null ? String(revisedPrompt) : null    
+      sessionId != null ? Number(sessionId) : null,
+      lessonId != null ? Number(lessonId) : null,
+      messageId != null ? String(messageId) : null,
+      description != null ? String(description) : null,
+      actualImageUrl,
+      subject != null ? String(subject) : null,
+      successFlag,
+      errorMessage != null ? String(errorMessage) : null,
+      revisedPrompt != null ? String(revisedPrompt) : null,
     ];
 
     // Debug log to see what we're inserting
-    console.log("🔍 Safe values for DB insert:", safeValues.map((val, idx) => {
-      const fieldNames = ['session_id', 'lesson_id', 'message_id', 'description', 'image_url', 'subject', 'success', 'error_message', 'revised_prompt'];
-      return {
-        field: fieldNames[idx],
-        index: idx,
-        type: typeof val,
-        isNull: val === null,
-        isUndefined: val === undefined,
-        value: val === null ? 'NULL' : val === undefined ? 'UNDEFINED' : (typeof val === 'string' && val.length > 50 ? val.substring(0, 50) + '...' : val)
-      };
-    }));
+    console.log(
+      "🔍 Safe values for DB insert:",
+      safeValues.map((val, idx) => {
+        const fieldNames = [
+          "session_id",
+          "lesson_id",
+          "message_id",
+          "description",
+          "image_url",
+          "subject",
+          "success",
+          "error_message",
+          "revised_prompt",
+        ];
+        return {
+          field: fieldNames[idx],
+          index: idx,
+          type: typeof val,
+          isNull: val === null,
+          isUndefined: val === undefined,
+          value:
+            val === null
+              ? "NULL"
+              : val === undefined
+              ? "UNDEFINED"
+              : typeof val === "string" && val.length > 50
+              ? val.substring(0, 50) + "..."
+              : val,
+        };
+      })
+    );
 
     // Insert into DB with explicit connection
     const [result] = await connection.query(
@@ -390,7 +429,6 @@ const storeImageInDatabase = async (
     );
 
     return result.insertId;
-
   } catch (error) {
     console.error("❌ Error storing image in database:", {
       error: error.message,
@@ -407,7 +445,7 @@ const storeImageInDatabase = async (
       subject: typeof subject,
       success: typeof success,
       errorMessage: typeof errorMessage,
-      revisedPrompt: typeof revisedPrompt
+      revisedPrompt: typeof revisedPrompt,
     });
     throw error;
   } finally {
@@ -416,10 +454,6 @@ const storeImageInDatabase = async (
     }
   }
 };
-
-
-
-
 
 // Enhanced function to process lesson content with better image handling
 const processLessonContent = async (
@@ -487,7 +521,11 @@ const processLessonContent = async (
 
     console.log(`🧪 Total visuals to generate: ${allMatches.length}`);
 
-    for (const { fullMatch, description, subject: effectiveSubject } of allMatches) {
+    for (const {
+      fullMatch,
+      description,
+      subject: effectiveSubject,
+    } of allMatches) {
       console.log(
         `🎯 Handling diagram for: "${description}" [Subject: ${effectiveSubject}, Lesson: ${lessonId}]`
       );
@@ -512,8 +550,8 @@ const processLessonContent = async (
               `📂 Found ${rows.length} cached images for Lesson=${lessonId}, using existing.`
             );
             diagramResult = { success: true };
-            diagramIds = rows.map(r => r.id);
-            diagramUrls = rows.map(r => r.image_url);
+            diagramIds = rows.map((r) => r.id);
+            diagramUrls = rows.map((r) => r.image_url);
           }
         } catch (cacheError) {
           console.warn("⚠️ Lesson cache check failed:", cacheError.message);
@@ -526,7 +564,10 @@ const processLessonContent = async (
         diagramResult = await generateDiagram(description, effectiveSubject);
 
         if (diagramResult.success && sessionId && localConnection) {
-          for (const [idx, uploadedUrl] of diagramResult.uploadedUrls.entries()) {
+          for (const [
+            idx,
+            uploadedUrl,
+          ] of diagramResult.uploadedUrls.entries()) {
             try {
               const id = await storeImageInDatabase(
                 sessionId,
@@ -563,7 +604,9 @@ const processLessonContent = async (
                data-lesson-id="${lessonId}"
                data-description="${description.replace(/"/g, "&quot;")}"
                data-subject="${effectiveSubject}">
-            <h4 style="color: #333; margin-bottom: 10px; font-size: 16px;">${description} (${idx + 1})</h4>
+            <h4 style="color: #333; margin-bottom: 10px; font-size: 16px;">${description} (${
+            idx + 1
+          })</h4>
             <img src="${url}" 
                  alt="Educational diagram: ${description}" 
                  style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"
@@ -573,13 +616,18 @@ const processLessonContent = async (
               <p style="margin: 5px 0 0 0; font-size: 12px;">Image could not be loaded</p>
             </div>
             <p style="font-style: italic; color: #666; margin-top: 10px; font-size: 12px;">
-              Subject: ${effectiveSubject.charAt(0).toUpperCase() + effectiveSubject.slice(1)}
+              Subject: ${
+                effectiveSubject.charAt(0).toUpperCase() +
+                effectiveSubject.slice(1)
+              }
             </p>
           </div>`;
         });
 
         processedContent = processedContent.replace(fullMatch, diagramsHtml);
-        console.log(`✅ Inserted ${diagramUrls.length} diagram(s) for: ${description}`);
+        console.log(
+          `✅ Inserted ${diagramUrls.length} diagram(s) for: ${description}`
+        );
       }
     }
 
@@ -593,16 +641,18 @@ const processLessonContent = async (
         localConnection.release();
         console.log("🔌 Released local database connection (internal)");
       } catch (releaseError) {
-        console.warn("⚠️ Error releasing local connection:", releaseError.message);
+        console.warn(
+          "⚠️ Error releasing local connection:",
+          releaseError.message
+        );
       }
     } else {
-      console.log("🔄 Skipped releasing connection (external one still in use)");
+      console.log(
+        "🔄 Skipped releasing connection (external one still in use)"
+      );
     }
   }
 };
-
-
-
 
 // Check if database columns exist
 const checkDatabaseColumns = async (connection) => {
@@ -872,13 +922,10 @@ const initializeDatabase = async () => {
 // Call initialization when module loads
 initializeDatabase().catch(console.error);
 
-
 // const ai = new GoogleGenAI({
-//   apiKey: process.env.GOOGLE_CLOUD_API_KEY, 
+//   apiKey: process.env.GOOGLE_CLOUD_API_KEY,
 // });
 // const model = "gemini-2.5-pro";
-
-
 
 const startLesson = async (req, res) => {
   let connection;
@@ -1053,19 +1100,19 @@ const startLesson = async (req, res) => {
     };
 
     // ✅ Vertex AI Gemini Model
-const model = vertexAI.getGenerativeModel({
-  model: "gemini-2.5-pro",  
-  generationConfig: {
-    maxOutputTokens: 65535,
-    temperature: 1,
-    topP: 0.95,
-    candidateCount: 1,
-  },
-  systemInstruction: {
-    role: "system",
-    parts: [{ text: systemPrompt }],
-  },
-});
+    const model = vertexAI.getGenerativeModel({
+      model: "gemini-2.5-pro",
+      generationConfig: {
+        maxOutputTokens: 65535,
+        temperature: 1,
+        topP: 0.95,
+        candidateCount: 1,
+      },
+      systemInstruction: {
+        role: "system",
+        parts: [{ text: systemPrompt }],
+      },
+    });
 
     console.log("🤖 Chat session created with Vertex AI Gemini");
 
@@ -1171,7 +1218,9 @@ const model = vertexAI.getGenerativeModel({
       hasVisuals,
       lesson_id,
       data: {
-        choices: [{ message: { role: "assistant", content: processedContent } }],
+        choices: [
+          { message: { role: "assistant", content: processedContent } },
+        ],
       },
     };
 
@@ -1197,12 +1246,6 @@ const model = vertexAI.getGenerativeModel({
     }
   }
 };
-
-
-
-
-
-
 
 // Add function to get lesson history
 const getLessonHistory = async (req, res) => {
@@ -1409,29 +1452,31 @@ const saveLessonData = async (req, res) => {
     let usedFallback = false;
 
     try {
-      console.log('📤 Attempting to save via API...');
-      
+      console.log("📤 Attempting to save via API...");
+
       const apiResponse = await fetch(`${process.env.BASE_URL}/lesson-data`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
         },
         body: JSON.stringify(apiData),
-        signal: AbortSignal.timeout(30000) 
+        signal: AbortSignal.timeout(30000),
       });
 
       if (!apiResponse.ok) {
         const responseText = await apiResponse.text();
-        console.log('❌ API Error Response:', responseText);
+        console.log("❌ API Error Response:", responseText);
         throw new Error(`API request failed with status ${apiResponse.status}`);
       }
 
       const responseText = await apiResponse.text();
       apiResult = JSON.parse(responseText);
-      console.log('✅ Successfully saved via API');
-
+      console.log("✅ Successfully saved via API");
     } catch (apiError) {
-      console.warn('⚠️ API failed, falling back to direct database insert:', apiError.message);
+      console.warn(
+        "⚠️ API failed, falling back to direct database insert:",
+        apiError.message
+      );
       usedFallback = true;
 
       // Fallback to direct database insert
@@ -1441,9 +1486,9 @@ const saveLessonData = async (req, res) => {
 
       apiResult = {
         id: result.insertId,
-        message: 'Saved via database fallback'
+        message: "Saved via database fallback",
       };
-      console.log('✅ Successfully saved via database fallback');
+      console.log("✅ Successfully saved via database fallback");
     }
 
     res.json({
@@ -1453,10 +1498,9 @@ const saveLessonData = async (req, res) => {
         id: apiResult.id || apiResult.data?.id,
         diagrams_generated: diagramCount,
         api_response: apiResult,
-        used_fallback: usedFallback
+        used_fallback: usedFallback,
       },
     });
-    
   } catch (error) {
     console.error("❌ Error saving lesson data:", error);
     res.status(500).json({
@@ -1467,8 +1511,6 @@ const saveLessonData = async (req, res) => {
     if (connection) connection.release();
   }
 };
-
-
 
 module.exports = {
   startLesson,
