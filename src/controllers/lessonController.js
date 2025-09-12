@@ -50,7 +50,7 @@ const fetchPromptFromAPI = async (subject, type) => {
 };
 
 process.env.GOOGLE_APPLICATION_CREDENTIALS =
-  "/cred/tutoh-466212-ce837e371aa6.json";
+  "/cred/tutoh-466212-c4b22734d8fb.json";
 
 const PROJECT_ID = "tutoh-466212";
 const LOCATION = "us-central1";
