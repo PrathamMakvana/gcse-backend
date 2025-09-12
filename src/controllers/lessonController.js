@@ -3,9 +3,11 @@ const mysql = require("mysql2/promise");
 const path = require("path");
 const { VertexAI } = require("@google-cloud/vertexai");
 const fs = require("fs/promises");
-const Replicate = require("replicate");
 const { GoogleGenAI } = require("@google/genai");
 const { GoogleGenerativeAI } = require("@google/generative-ai"); 
+
+
+
 
 // ✅ Create MySQL pool
 const pool = mysql.createPool({
@@ -46,6 +48,21 @@ const fetchPromptFromAPI = async (subject, type) => {
     throw error;
   }
 };
+
+
+
+
+process.env.GOOGLE_APPLICATION_CREDENTIALS = path.join(__dirname, '../../tutoh-466212-ce837e371aa6.json');
+
+const PROJECT_ID = "tutoh-466212";
+const LOCATION = "us-central1";
+
+// ✅ Create Vertex AI client
+const vertexAI = new VertexAI({
+  project: PROJECT_ID,
+  location: LOCATION,
+});
+
 
 
 
@@ -133,6 +150,10 @@ const uploadBase64Image = async (base64DataUri) => {
     };
   }
 };
+
+
+
+
 
 
 const generateDiagram = async (description, imageName = "", sessionId = null, lessonId = null, messageId = null, subject = null) => {
@@ -292,6 +313,8 @@ const generateDiagram = async (description, imageName = "", sessionId = null, le
     };
   }
 };
+
+
 
 
 
@@ -850,10 +873,10 @@ const initializeDatabase = async () => {
 initializeDatabase().catch(console.error);
 
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GOOGLE_CLOUD_API_KEY, 
-});
-const model = "gemini-2.5-pro";
+// const ai = new GoogleGenAI({
+//   apiKey: process.env.GOOGLE_CLOUD_API_KEY, 
+// });
+// const model = "gemini-2.5-pro";
 
 
 
@@ -1029,30 +1052,22 @@ const startLesson = async (req, res) => {
       student_previous_summary,
     };
 
-    // Set up Gemini config
-    const generationConfig = {
-      maxOutputTokens: 65535,
-      temperature: 1,
-      topP: 0.95,
-      seed: 0,
-      safetySettings: [
-        { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "OFF" },
-        { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "OFF" },
-        { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "OFF" },
-        { category: "HARM_CATEGORY_HARASSMENT", threshold: "OFF" },
-      ],
-      systemInstruction: { parts: [{ text: systemPrompt }] },
-    };
+    // ✅ Vertex AI Gemini Model
+const model = vertexAI.getGenerativeModel({
+  model: "gemini-2.5-pro",  
+  generationConfig: {
+    maxOutputTokens: 65535,
+    temperature: 1,
+    topP: 0.95,
+    candidateCount: 1,
+  },
+  systemInstruction: {
+    role: "system",
+    parts: [{ text: systemPrompt }],
+  },
+});
 
-    // 🔑 Initialize GoogleGenAI with API key
-    const ai = new GoogleGenAI({
-      apiKey: process.env.GOOGLE_CLOUD_API_KEY, // must be set in env
-    });
-
-    const model = "gemini-2.5-pro"; // 🔑 define model explicitly
-
-    const chat = ai.chats.create({ model, config: generationConfig });
-    console.log("🤖 Chat session created with Gemini AI");
+    console.log("🤖 Chat session created with Vertex AI Gemini");
 
     const messageContent = JSON.stringify({
       ...userLessonInput,
@@ -1062,18 +1077,23 @@ const startLesson = async (req, res) => {
     console.log("📤 Sending message to Gemini:", messageContent);
 
     // Request Gemini response (non-streaming)
-    const response = await chat.sendMessage({ message: { text: messageContent } });
+    const response = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: messageContent }],
+        },
+      ],
+    });
 
     // 🚨 Log the full response for debugging
     console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
 
     // ✅ Extract assistant text safely
     let assistantContent =
-      response?.output_text ||
-      response?.candidates?.[0]?.content?.parts
+      response?.response?.candidates?.[0]?.content?.parts
         ?.map((p) => p.text || "")
-        .join("\n") ||
-      "";
+        .join("\n") || "";
 
     console.log("📥 Extracted assistantContent:", assistantContent);
 
@@ -1091,7 +1111,7 @@ const startLesson = async (req, res) => {
         normalizedSubject,
         sessionId,
         messageId,
-        connection, // ✅ reuse the same connection
+        connection,
         lesson_id
       );
     }
@@ -1128,8 +1148,6 @@ const startLesson = async (req, res) => {
         insertQuery += ", has_visuals";
         insertValues.push(assistantMessage.has_visuals);
       }
-
-      // 🔎 Optionally store raw Gemini JSON for debugging (if your DB schema allows)
       if (columnCheck.hasRawResponse) {
         insertQuery += ", raw_response";
         insertValues.push(JSON.stringify(response));
