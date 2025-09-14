@@ -1099,60 +1099,42 @@ const startLesson = async (req, res) => {
       student_previous_summary,
     };
 
-// ✅ Vertex AI Gemini Model
-const model = vertexAI.getGenerativeModel({
-  model: "gemini-2.5-pro",
-  generationConfig: {
-    maxOutputTokens: 65535,
-    temperature: 1,
-    topP: 0.95,
-    candidateCount: 1,
-  },
-  systemInstruction: {
-    role: "system",
-    parts: [{ text: systemPrompt }],
-  },
-});
+    // ✅ Vertex AI Gemini Model
+    const model = vertexAI.getGenerativeModel({
+      model: "gemini-2.5-pro",
+      generationConfig: {
+        maxOutputTokens: 65535,
+        temperature: 1,
+        topP: 0.95,
+        candidateCount: 1,
+      },
+      systemInstruction: {
+        role: "system",
+        parts: [{ text: systemPrompt }],
+      },
+    });
 
-console.log("🤖 Chat session created with Vertex AI Gemini");
+    console.log("🤖 Chat session created with Vertex AI Gemini");
 
-// keep a history so it works turn-by-turn
-let conversationHistory = [];
+    const messageContent = JSON.stringify({
+      ...userLessonInput,
+      student_response: messages[messages.length - 1]?.content || "",
+    });
 
-// instead of embedding JSON, just pass the actual turn content
-const messageContent =
-  messages[messages.length - 1]?.content ||
-  JSON.stringify(userLessonInput || {});
+    console.log("📤 Sending message to Gemini:", messageContent);
 
-console.log("📤 Sending message to Gemini:", messageContent);
+    // Request Gemini response (non-streaming)
+    const response = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [{ text: messageContent }],
+        },
+      ],
+    });
 
-// add latest user/student turn into history
-conversationHistory.push({
-  role: "user",
-  parts: [{ text: messageContent }],
-});
-
-// Request Gemini response (non-streaming)
-const response = await model.generateContent({
-  contents: [...conversationHistory],
-});
-
-// 🚨 Log the full response for debugging
-console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
-
-// safely extract teacher text
-const teacherReply =
-  response?.response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
-
-console.log("👨‍🏫 Gemini teacher reply:", teacherReply);
-
-// add teacher reply back into history for next turn
-conversationHistory.push({
-  role: "model",
-  parts: [{ text: teacherReply }],
-});
-
-
+    // 🚨 Log the full response for debugging
+    console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
 
     // ✅ Extract assistant text safely
     let assistantContent =
