@@ -1110,50 +1110,48 @@ const model = vertexAI.getGenerativeModel({
   },
   systemInstruction: {
     role: "system",
-    parts: [
-      {
-        text: `${systemPrompt}\n\nIMPORTANT:\n- Only generate the teacher's response.\n- Do not simulate or invent student replies.\n- Stop after one message.\n- Wait for user/student input before continuing.`,
-      },
-    ],
+    parts: [{ text: systemPrompt }],
   },
 });
 
 console.log("🤖 Chat session created with Vertex AI Gemini");
 
-// keep history outside function so it persists between calls
+// keep a history so it works turn-by-turn
 let conversationHistory = [];
 
-// function for one chat turn
-async function nextTurn(userInput) {
-  // push user message to history
-  conversationHistory.push({
-    role: "user",
-    parts: [{ text: userInput }],
-  });
+// instead of embedding JSON, just pass the actual turn content
+const messageContent =
+  messages[messages.length - 1]?.content ||
+  JSON.stringify(userLessonInput || {});
 
-  console.log("📤 Sending message to Gemini:", userInput);
+console.log("📤 Sending message to Gemini:", messageContent);
 
-  // ask Gemini for only the next teacher message
-  const response = await model.generateContent({
-    contents: [
-      ...conversationHistory, // all past turns
-    ],
-  });
+// add latest user/student turn into history
+conversationHistory.push({
+  role: "user",
+  parts: [{ text: messageContent }],
+});
 
-  // extract text safely
-  const reply =
-    response?.response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+// Request Gemini response (non-streaming)
+const response = await model.generateContent({
+  contents: [...conversationHistory],
+});
 
-  console.log("📥 Gemini teacher reply:", reply);
+// 🚨 Log the full response for debugging
+console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
 
-  // push teacher reply to history
-  conversationHistory.push({
-    role: "model",
-    parts: [{ text: reply }],
-  });
+// safely extract teacher text
+const teacherReply =
+  response?.response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
 
-  return reply;
-}
+console.log("👨‍🏫 Gemini teacher reply:", teacherReply);
+
+// add teacher reply back into history for next turn
+conversationHistory.push({
+  role: "model",
+  parts: [{ text: teacherReply }],
+});
+
 
 
     // ✅ Extract assistant text safely
