@@ -1099,42 +1099,62 @@ const startLesson = async (req, res) => {
       student_previous_summary,
     };
 
-    // ✅ Vertex AI Gemini Model
-    const model = vertexAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
-      generationConfig: {
-        maxOutputTokens: 65535,
-        temperature: 1,
-        topP: 0.95,
-        candidateCount: 1,
+// ✅ Vertex AI Gemini Model
+const model = vertexAI.getGenerativeModel({
+  model: "gemini-2.5-pro",
+  generationConfig: {
+    maxOutputTokens: 65535,
+    temperature: 1,
+    topP: 0.95,
+    candidateCount: 1,
+  },
+  systemInstruction: {
+    role: "system",
+    parts: [
+      {
+        text: `${systemPrompt}\n\nIMPORTANT:\n- Only generate the teacher's response.\n- Do not simulate or invent student replies.\n- Stop after one message.\n- Wait for user/student input before continuing.`,
       },
-      systemInstruction: {
-        role: "system",
-        parts: [{ text: systemPrompt }],
-      },
-    });
+    ],
+  },
+});
 
-    console.log("🤖 Chat session created with Vertex AI Gemini");
+console.log("🤖 Chat session created with Vertex AI Gemini");
 
-    const messageContent = JSON.stringify({
-      ...userLessonInput,
-      student_response: messages[messages.length - 1]?.content || "",
-    });
+// keep history outside function so it persists between calls
+let conversationHistory = [];
 
-    console.log("📤 Sending message to Gemini:", messageContent);
+// function for one chat turn
+async function nextTurn(userInput) {
+  // push user message to history
+  conversationHistory.push({
+    role: "user",
+    parts: [{ text: userInput }],
+  });
 
-    // Request Gemini response (non-streaming)
-    const response = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: messageContent }],
-        },
-      ],
-    });
+  console.log("📤 Sending message to Gemini:", userInput);
 
-    // 🚨 Log the full response for debugging
-    console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
+  // ask Gemini for only the next teacher message
+  const response = await model.generateContent({
+    contents: [
+      ...conversationHistory, // all past turns
+    ],
+  });
+
+  // extract text safely
+  const reply =
+    response?.response?.candidates?.[0]?.content?.parts?.[0]?.text || "";
+
+  console.log("📥 Gemini teacher reply:", reply);
+
+  // push teacher reply to history
+  conversationHistory.push({
+    role: "model",
+    parts: [{ text: reply }],
+  });
+
+  return reply;
+}
+
 
     // ✅ Extract assistant text safely
     let assistantContent =
