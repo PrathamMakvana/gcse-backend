@@ -1087,19 +1087,19 @@ const startLesson = async (req, res) => {
       }
     }
 
-    const userLessonInput = {
-      student_id,
-      student_name,
-      subject: normalizedSubject,
-      exam_board,
-      tier,
-      lesson_topic_code,
-      lesson_topic,
-      lesson_start_time: toMySQLDateTime(new Date()),
-      student_previous_summary,
-    };
+const userLessonInput = {
+  student_id,
+  student_name,
+  subject: normalizedSubject,
+  exam_board,
+  tier,
+  lesson_topic_code,
+  lesson_topic,
+  lesson_start_time: toMySQLDateTime(new Date()),
+  student_previous_summary,
+};
 
-   // ✅ Vertex AI Gemini Model
+// ✅ Vertex AI Gemini Model
 const model = vertexAI.getGenerativeModel({
   model: "gemini-2.5-pro",
   generationConfig: {
@@ -1131,7 +1131,6 @@ const chat = model.startChat({
   },
 });
 
-// ✅ format latest student input
 const messageContent = JSON.stringify({
   ...userLessonInput,
   student_response: messages[messages.length - 1]?.content || "",
@@ -1139,7 +1138,7 @@ const messageContent = JSON.stringify({
 
 console.log("📤 Sending message to Gemini:", messageContent);
 
-// Request Gemini response (awaits like one-to-one chat)
+// ✅ Request Gemini response (await one-to-one reply)
 const response = await chat.sendMessage({
   contents: [
     {
@@ -1177,6 +1176,7 @@ if (assistantContent?.includes("CreateVisual:")) {
     connection,
     lesson_id
   );
+}
 
 // Save assistant message
 if (assistantContent) {
@@ -1190,42 +1190,41 @@ if (assistantContent) {
   };
 
   console.log("📝 Saving assistant message:", assistantMessage);
+
+  let insertQuery =
+    "INSERT INTO session_messages (session_id, role, content, timestamp, message_id, student_id";
+  let insertValues = [
+    sessionId,
+    assistantMessage.role,
+    assistantMessage.content,
+    assistantMessage.timestamp,
+    assistantMessage.id,
+    student_id,
+  ];
+
+  if (columnCheck.hasProcessedContent) {
+    insertQuery += ", processed_content";
+    insertValues.push(assistantMessage.processed_content);
+  }
+  if (columnCheck.hasVisuals) {
+    insertQuery += ", has_visuals";
+    insertValues.push(assistantMessage.has_visuals);
+  }
+  if (columnCheck.hasRawResponse) {
+    insertQuery += ", raw_response";
+    insertValues.push(JSON.stringify(response));
+  }
+
+  insertQuery += ") VALUES (?, ?, ?, ?, ?, ?";
+  if (columnCheck.hasProcessedContent) insertQuery += ", ?";
+  if (columnCheck.hasVisuals) insertQuery += ", ?";
+  if (columnCheck.hasRawResponse) insertQuery += ", ?";
+  insertQuery += ")";
+
+  await connection.query(insertQuery, insertValues);
+} else {
+  console.warn("⚠ No assistant content returned from Gemini");
 }
-
-      let insertQuery =
-        "INSERT INTO session_messages (session_id, role, content, timestamp, message_id, student_id";
-      let insertValues = [
-        sessionId,
-        assistantMessage.role,
-        assistantMessage.content,
-        assistantMessage.timestamp,
-        assistantMessage.id,
-        student_id,
-      ];
-
-      if (columnCheck.hasProcessedContent) {
-        insertQuery += ", processed_content";
-        insertValues.push(assistantMessage.processed_content);
-      }
-      if (columnCheck.hasVisuals) {
-        insertQuery += ", has_visuals";
-        insertValues.push(assistantMessage.has_visuals);
-      }
-      if (columnCheck.hasRawResponse) {
-        insertQuery += ", raw_response";
-        insertValues.push(JSON.stringify(response));
-      }
-
-      insertQuery += ") VALUES (?, ?, ?, ?, ?, ?";
-      if (columnCheck.hasProcessedContent) insertQuery += ", ?";
-      if (columnCheck.hasVisuals) insertQuery += ", ?";
-      if (columnCheck.hasRawResponse) insertQuery += ", ?";
-      insertQuery += ")";
-
-      await connection.query(insertQuery, insertValues);
-    } else {
-      console.warn("⚠ No assistant content returned from Gemini");
-    }
 
     // Final JSON response
     const finalResponse = {
