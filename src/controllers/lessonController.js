@@ -1138,16 +1138,27 @@ const startLesson = async (req, res) => {
 
     console.log("📤 Sending message to Gemini:", safeText);
 
-    const response = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: safeText }],
-        },
-      ],
-    });
+    // ✅ Create stateful chat session with history
+const chat = model.startChat({
+  history: messages.map(m => ({
+    role: m.role === "assistant" ? "model" : m.role, // Vertex expects "model" not "assistant"
+    parts: [{ text: m.content }],
+  })),
+  generationConfig: {
+    maxOutputTokens: 65535,
+    temperature: 1,
+    topP: 0.95,
+  },
+});
 
-    console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
+// ✅ Get latest student input
+const latestStudentResponse = messages[messages.length - 1]?.content?.trim() || "(no response)";
+
+// ✅ Send message to Gemini (stateful chat)
+const response = await chat.sendMessage(latestStudentResponse);
+
+// 🚨 Log the full response for debugging
+console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
 
     let assistantContent =
       response?.response?.candidates?.[0]?.content?.parts
