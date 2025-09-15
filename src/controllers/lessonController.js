@@ -88,7 +88,9 @@ const startLesson = async (req, res) => {
       !lesson_topic_code ||
       !lesson_topic
     ) {
-      return res.status(400).json({ success: false, error: "Missing required fields" });
+      return res
+        .status(400)
+        .json({ success: false, error: "Missing required fields" });
     }
 
     console.log("📚 Starting lesson for:", {
@@ -135,7 +137,14 @@ const startLesson = async (req, res) => {
        AND tier = ? 
        AND lesson_topic_code = ? 
        AND lesson_topic = ?`,
-      [student_id, normalizedSubject, exam_board, tier, lesson_topic_code, lesson_topic]
+      [
+        student_id,
+        normalizedSubject,
+        exam_board,
+        tier,
+        lesson_topic_code,
+        lesson_topic,
+      ]
     );
 
     let sessionId;
@@ -255,25 +264,28 @@ const startLesson = async (req, res) => {
 
     // ✅ Build the full lesson context + latest student response
     let studentResponse = messages[messages.length - 1]?.content?.trim();
-    if (!studentResponse) studentResponse = "(no input provided)";
+    if (!studentResponse) {
+      studentResponse = "(no response provided)";
+    }
 
     const messagePayload = {
       ...userLessonInput,
       student_response: studentResponse,
     };
 
-    console.log("📤 Sending message to Gemini:", messagePayload);
+    let safeText = JSON.stringify(messagePayload);
+    if (!safeText || safeText === "{}") {
+      safeText = `(lesson payload missing, student said: ${studentResponse})`;
+    }
+
+    console.log("📤 Sending safe message to Gemini:", safeText);
 
     // ✅ Request Gemini response (await one-to-one reply)
     const response = await chat.sendMessage({
       contents: [
         {
           role: "user",
-          parts: [
-            {
-              text: JSON.stringify(messagePayload),
-            },
-          ],
+          parts: [{ text: safeText }],
         },
       ],
     });
@@ -283,8 +295,9 @@ const startLesson = async (req, res) => {
 
     // ✅ Extract assistant text safely
     let assistantContent =
-      response?.response?.candidates?.[0]?.content?.parts?.map((p) => p.text || "").join("\n") ||
-      "";
+      response?.response?.candidates?.[0]?.content?.parts
+        ?.map((p) => p.text || "")
+        .join("\n") || "";
 
     console.log("📥 Extracted assistantContent:", assistantContent);
 
@@ -362,17 +375,23 @@ const startLesson = async (req, res) => {
       hasVisuals,
       lesson_id,
       data: {
-        choices: [{ message: { role: "assistant", content: processedContent } }],
+        choices: [
+          { message: { role: "assistant", content: processedContent } },
+        ],
       },
     };
 
     console.log("📤 Final API Response to frontend:", finalResponse);
+
     return res.json(finalResponse);
   } catch (error) {
     console.error("❌ Lesson Error:", error);
     return res.status(500).json({
       success: false,
-      error: error.response?.data?.error?.message || error.message || "Internal Server Error",
+      error:
+        error.response?.data?.error?.message ||
+        error.message ||
+        "Internal Server Error",
     });
   } finally {
     if (connection) {
@@ -384,6 +403,7 @@ const startLesson = async (req, res) => {
     }
   }
 };
+
 
 // === getLessonHistory and saveLessonData unchanged ===
 
