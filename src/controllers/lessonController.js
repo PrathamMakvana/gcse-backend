@@ -1177,7 +1177,6 @@ if (assistantContent?.includes("CreateVisual:")) {
     connection,
     lesson_id
   );
-}
 
 // Save assistant message
 if (assistantContent) {
