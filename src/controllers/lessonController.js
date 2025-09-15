@@ -944,7 +944,6 @@ const startLesson = async (req, res) => {
       lesson_id,
     } = req.body;
 
-    // Get connection early
     connection = await pool.getConnection();
 
     // Basic validation
@@ -969,7 +968,6 @@ const startLesson = async (req, res) => {
       lesson_id,
     });
 
-    // Normalize subject
     const normalizedSubject = subject.trim().toLowerCase();
 
     // Fetch system prompt dynamically
@@ -986,7 +984,6 @@ const startLesson = async (req, res) => {
       });
     }
 
-    // Helper: Date → MySQL DATETIME
     const toMySQLDateTime = (date) => {
       if (!date) return null;
       const d = new Date(date);
@@ -994,10 +991,9 @@ const startLesson = async (req, res) => {
       return d.toISOString().slice(0, 19).replace("T", " ");
     };
 
-    // Check DB columns
     const columnCheck = await checkDatabaseColumns(connection);
 
-    // Check existing session
+    // 🔍 Check existing session
     const [existingSessions] = await connection.query(
       `SELECT id FROM tutoring_sessions 
        WHERE student_id = ? 
@@ -1017,11 +1013,12 @@ const startLesson = async (req, res) => {
     );
 
     let sessionId;
+    let isNewSession = false;
+
     if (existingSessions.length > 0) {
       sessionId = existingSessions[0].id;
       console.log(`🔄 Using existing session ID: ${sessionId}`);
 
-      // Insert latest message only
       if (messages.length > 0) {
         const latestMessage = messages[messages.length - 1];
         if (latestMessage.content?.trim()) {
@@ -1042,7 +1039,7 @@ const startLesson = async (req, res) => {
         }
       }
     } else {
-      // Create new session
+      // New session
       const [result] = await connection.query(
         `INSERT INTO tutoring_sessions (
           student_id, student_name, subject, exam_board, tier, 
@@ -1060,9 +1057,9 @@ const startLesson = async (req, res) => {
         ]
       );
       sessionId = result.insertId;
+      isNewSession = true;
       console.log(`🆕 Created new session ID: ${sessionId}`);
 
-      // Insert initial messages
       if (messages.length > 0) {
         const messageValues = messages
           .filter((msg) => msg.content?.trim())
@@ -1116,27 +1113,42 @@ const startLesson = async (req, res) => {
 
     console.log("🤖 Chat session created with Vertex AI Gemini");
 
-    const messageContent = JSON.stringify({
-      ...userLessonInput,
-      student_response: messages[messages.length - 1]?.content || "",
-    });
+    // ✅ Build message payload depending on session type
+    let studentResponse = messages[messages.length - 1]?.content?.trim();
+    if (!studentResponse) {
+      studentResponse = "(no response provided)";
+    }
 
-    console.log("📤 Sending message to Gemini:", messageContent);
+    let messagePayload;
 
-    // Request Gemini response (non-streaming)
+    if (isNewSession) {
+      // First time → include metadata + student response
+      messagePayload = {
+        ...userLessonInput,
+        student_response: studentResponse,
+      };
+    } else {
+      // Continuing → only send the student response
+      messagePayload = {
+        student_response: studentResponse,
+      };
+    }
+
+    const safeText = JSON.stringify(messagePayload);
+
+    console.log("📤 Sending message to Gemini:", safeText);
+
     const response = await model.generateContent({
       contents: [
         {
           role: "user",
-          parts: [{ text: messageContent }],
+          parts: [{ text: safeText }],
         },
       ],
     });
 
-    // 🚨 Log the full response for debugging
     console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
 
-    // ✅ Extract assistant text safely
     let assistantContent =
       response?.response?.candidates?.[0]?.content?.parts
         ?.map((p) => p.text || "")
@@ -1148,7 +1160,6 @@ const startLesson = async (req, res) => {
     let hasVisuals = false;
     const messageId = Date.now().toString();
 
-    // Handle visuals if present
     if (assistantContent?.includes("CreateVisual:")) {
       console.log("🎨 Processing visual content...");
       hasVisuals = true;
@@ -1163,7 +1174,6 @@ const startLesson = async (req, res) => {
       );
     }
 
-    // Save assistant message
     if (assistantContent) {
       const assistantMessage = {
         role: "assistant",
@@ -1211,7 +1221,6 @@ const startLesson = async (req, res) => {
       console.warn("⚠ No assistant content returned from Gemini");
     }
 
-    // Final JSON response
     const finalResponse = {
       success: true,
       sessionId,
@@ -1246,6 +1255,7 @@ const startLesson = async (req, res) => {
     }
   }
 };
+
 
 // Add function to get lesson history
 const getLessonHistory = async (req, res) => {
