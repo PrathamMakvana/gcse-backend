@@ -1099,82 +1099,99 @@ const startLesson = async (req, res) => {
       student_previous_summary,
     };
 
-    // ✅ Vertex AI Gemini Model
-    const model = vertexAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
-      generationConfig: {
-        maxOutputTokens: 65535,
-        temperature: 1,
-        topP: 0.95,
-        candidateCount: 1,
-      },
-      systemInstruction: {
-        role: "system",
-        parts: [{ text: systemPrompt }],
-      },
-    });
+   // ✅ Vertex AI Gemini Model
+const model = vertexAI.getGenerativeModel({
+  model: "gemini-2.5-pro",
+  generationConfig: {
+    maxOutputTokens: 65535,
+    temperature: 1,
+    topP: 0.95,
+    candidateCount: 1,
+  },
+  systemInstruction: {
+    role: "system",
+    parts: [{ text: systemPrompt }],
+  },
+});
 
-    console.log("🤖 Chat session created with Vertex AI Gemini");
+console.log("🤖 Chat session created with Vertex AI Gemini");
 
-    const messageContent = JSON.stringify({
-      ...userLessonInput,
-      student_response: messages[messages.length - 1]?.content || "",
-    });
+// ✅ create chat session (stateful, one-to-one)
+const chat = model.startChat({
+  history: [
+    {
+      role: "system",
+      parts: [{ text: systemPrompt }],
+    },
+  ],
+  generationConfig: {
+    maxOutputTokens: 65535,
+    temperature: 1,
+    topP: 0.95,
+  },
+});
 
-    console.log("📤 Sending message to Gemini:", messageContent);
+// ✅ format latest student input
+const messageContent = JSON.stringify({
+  ...userLessonInput,
+  student_response: messages[messages.length - 1]?.content || "",
+});
 
-    // Request Gemini response (non-streaming)
-    const response = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: messageContent }],
-        },
-      ],
-    });
+console.log("📤 Sending message to Gemini:", messageContent);
 
-    // 🚨 Log the full response for debugging
-    console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
+// Request Gemini response (awaits like one-to-one chat)
+const response = await chat.sendMessage({
+  contents: [
+    {
+      role: "user",
+      parts: [{ text: messageContent }],
+    },
+  ],
+});
 
-    // ✅ Extract assistant text safely
-    let assistantContent =
-      response?.response?.candidates?.[0]?.content?.parts
-        ?.map((p) => p.text || "")
-        .join("\n") || "";
+// 🚨 Log the full response for debugging
+console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
 
-    console.log("📥 Extracted assistantContent:", assistantContent);
+// ✅ Extract assistant text safely
+let assistantContent =
+  response?.response?.candidates?.[0]?.content?.parts
+    ?.map((p) => p.text || "")
+    .join("\n") || "";
 
-    let processedContent = assistantContent;
-    let hasVisuals = false;
-    const messageId = Date.now().toString();
+console.log("📥 Extracted assistantContent:", assistantContent);
 
-    // Handle visuals if present
-    if (assistantContent?.includes("CreateVisual:")) {
-      console.log("🎨 Processing visual content...");
-      hasVisuals = true;
+let processedContent = assistantContent;
+let hasVisuals = false;
+const messageId = Date.now().toString();
 
-      processedContent = await processLessonContent(
-        assistantContent,
-        normalizedSubject,
-        sessionId,
-        messageId,
-        connection,
-        lesson_id
-      );
-    }
+// Handle visuals if present
+if (assistantContent?.includes("CreateVisual:")) {
+  console.log("🎨 Processing visual content...");
+  hasVisuals = true;
 
-    // Save assistant message
-    if (assistantContent) {
-      const assistantMessage = {
-        role: "assistant",
-        content: assistantContent,
-        processed_content: processedContent,
-        has_visuals: hasVisuals,
-        timestamp: toMySQLDateTime(new Date()),
-        id: messageId,
-      };
+  processedContent = await processLessonContent(
+    assistantContent,
+    normalizedSubject,
+    sessionId,
+    messageId,
+    connection,
+    lesson_id
+  );
+}
 
-      console.log("📝 Saving assistant message:", assistantMessage);
+// Save assistant message
+if (assistantContent) {
+  const assistantMessage = {
+    role: "assistant",
+    content: assistantContent,
+    processed_content: processedContent,
+    has_visuals: hasVisuals,
+    timestamp: toMySQLDateTime(new Date()),
+    id: messageId,
+  };
+
+  console.log("📝 Saving assistant message:", assistantMessage);
+}
 
       let insertQuery =
         "INSERT INTO session_messages (session_id, role, content, timestamp, message_id, student_id";
