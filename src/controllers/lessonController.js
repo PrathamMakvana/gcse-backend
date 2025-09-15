@@ -1131,19 +1131,25 @@ const chat = model.startChat({
   },
 });
 
-const messageContent = JSON.stringify({
+// ✅ Build the full lesson context + latest student response
+const studentResponse = messages[messages.length - 1]?.content || "";
+const messagePayload = {
   ...userLessonInput,
-  student_response: messages[messages.length - 1]?.content || "",
-});
+  student_response: studentResponse,
+};
 
-console.log("📤 Sending message to Gemini:", messageContent);
+console.log("📤 Sending message to Gemini:", messagePayload);
 
 // ✅ Request Gemini response (await one-to-one reply)
 const response = await chat.sendMessage({
   contents: [
     {
       role: "user",
-      parts: [{ text: messageContent }],
+      parts: [
+        {
+          text: JSON.stringify(messagePayload), // Always non-empty
+        },
+      ],
     },
   ],
 });
@@ -1225,6 +1231,7 @@ if (assistantContent) {
 } else {
   console.warn("⚠ No assistant content returned from Gemini");
 }
+
 
     // Final JSON response
     const finalResponse = {
