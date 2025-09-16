@@ -484,6 +484,7 @@ const processLessonContent = async (
 
     const inlinePattern = /\[CreateVisual:\s*["'](.+?)["']\]/g;
     const blockPattern = /CreateVisual:\s*([\s\S]+?)(?=\n\n|$)/gi;
+    const jsonPattern = /\[CreateVisual:\s*(\{[\s\S]+?\})\s*\]/g;
 
     let processedContent = content;
     const allMatches = [];
@@ -516,6 +517,22 @@ const processLessonContent = async (
           description: description.replace(/\s+/g, " "),
           subject: finalSubject,
         });
+      }
+    }
+
+    // JSON matches
+    for (const match of content.matchAll(jsonPattern)) {
+      try {
+        const obj = JSON.parse(match[1]);
+        if (obj.visual_prompt) {
+          allMatches.push({
+            fullMatch: match[0],
+            description: obj.visual_prompt.trim(),
+            subject,
+          });
+        }
+      } catch (e) {
+        console.warn("⚠️ Failed to parse CreateVisual JSON:", e.message);
       }
     }
 
@@ -564,10 +581,7 @@ const processLessonContent = async (
         diagramResult = await generateDiagram(description, effectiveSubject);
 
         if (diagramResult.success && sessionId && localConnection) {
-          for (const [
-            idx,
-            uploadedUrl,
-          ] of diagramResult.uploadedUrls.entries()) {
+          for (const [idx, uploadedUrl] of diagramResult.uploadedUrls.entries()) {
             try {
               const id = await storeImageInDatabase(
                 sessionId,
@@ -595,33 +609,17 @@ const processLessonContent = async (
       // Replace placeholders
       if (diagramResult?.success) {
         let diagramsHtml = "";
-
         diagramUrls.forEach((url, idx) => {
           diagramsHtml += `
-          <div class="lesson-diagram" 
-               style="margin: 20px 0; text-align: center; border: 2px solid #e0e0e0; border-radius: 12px; padding: 15px; background: #f9f9f9;" 
-               data-diagram-id="${diagramIds[idx] || ""}" 
-               data-lesson-id="${lessonId}"
-               data-description="${description.replace(/"/g, "&quot;")}"
-               data-subject="${effectiveSubject}">
-            <h4 style="color: #333; margin-bottom: 10px; font-size: 16px;">${description} (${
-            idx + 1
-          })</h4>
-            <img src="${url}" 
-                 alt="Educational diagram: ${description}" 
-                 style="max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);"
-                 onerror="this.style.display='none'; this.nextElementSibling.style.display='block';">
-            <div style="display: none; padding: 20px; background: #f8d7da; border: 1px solid #f5c6cb; border-radius: 8px; color: #721c24;">
-              <p style="margin: 0; font-weight: bold;">📊 Diagram: ${description}</p>
-              <p style="margin: 5px 0 0 0; font-size: 12px;">Image could not be loaded</p>
-            </div>
-            <p style="font-style: italic; color: #666; margin-top: 10px; font-size: 12px;">
-              Subject: ${
-                effectiveSubject.charAt(0).toUpperCase() +
-                effectiveSubject.slice(1)
-              }
-            </p>
-          </div>`;
+    <div class="lesson-diagram" 
+         style="margin: 20px 0; text-align: center; border-radius: 12px; padding: 15px; background: #f9f9f9;"
+         data-diagram-id="${diagramIds[idx] || ""}" 
+         data-lesson-id="${lessonId}">
+      <img src="${url}" 
+           alt="Educational diagram" 
+           style="max-width: 100%; height: auto; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);" 
+           onerror="this.style.display='none';">
+    </div>`;
         });
 
         processedContent = processedContent.replace(fullMatch, diagramsHtml);
@@ -653,6 +651,7 @@ const processLessonContent = async (
     }
   }
 };
+
 
 // Check if database columns exist
 const checkDatabaseColumns = async (connection) => {
@@ -946,7 +945,6 @@ const startLesson = async (req, res) => {
 
     connection = await pool.getConnection();
 
-    // Basic validation
     if (
       !student_id ||
       !student_name ||
@@ -970,7 +968,6 @@ const startLesson = async (req, res) => {
 
     const normalizedSubject = subject.trim().toLowerCase();
 
-    // Fetch system prompt dynamically
     let systemPrompt;
     try {
       const promptType = type?.trim() || "lesson";
@@ -993,7 +990,6 @@ const startLesson = async (req, res) => {
 
     const columnCheck = await checkDatabaseColumns(connection);
 
-    // 🔍 Check existing session
     const [existingSessions] = await connection.query(
       `SELECT id FROM tutoring_sessions 
        WHERE student_id = ? 
@@ -1039,7 +1035,6 @@ const startLesson = async (req, res) => {
         }
       }
     } else {
-      // New session
       const [result] = await connection.query(
         `INSERT INTO tutoring_sessions (
           student_id, student_name, subject, exam_board, tier, 
@@ -1084,7 +1079,8 @@ const startLesson = async (req, res) => {
       }
     }
 
-    const userLessonInput = {
+    // ✅ Always send full context to Gemini
+    const messagePayload = {
       student_id,
       student_name,
       subject: normalizedSubject,
@@ -1092,11 +1088,19 @@ const startLesson = async (req, res) => {
       tier,
       lesson_topic_code,
       lesson_topic,
-      lesson_start_time: toMySQLDateTime(new Date()),
       student_previous_summary,
+      lesson_start_time: toMySQLDateTime(new Date()),
+      student_response:
+        messages[messages.length - 1]?.content?.trim() || "(no response)",
     };
 
-    // ✅ Vertex AI Gemini Model
+    console.log(
+      isNewSession
+        ? "🆕 New session payload built:"
+        : "🔄 Continuing session payload built:",
+      messagePayload
+    );
+
     const model = vertexAI.getGenerativeModel({
       model: "gemini-2.5-pro",
       generationConfig: {
@@ -1113,52 +1117,28 @@ const startLesson = async (req, res) => {
 
     console.log("🤖 Chat session created with Vertex AI Gemini");
 
-    // ✅ Build message payload depending on session type
-    let studentResponse = messages[messages.length - 1]?.content?.trim();
-    if (!studentResponse) {
-      studentResponse = "(no response provided)";
-    }
+    const chat = model.startChat({
+      history: messages.map((m) => ({
+        role: m.role === "assistant" ? "model" : m.role,
+        parts: [{ text: m.content }],
+      })),
+      generationConfig: {
+        maxOutputTokens: 65535,
+        temperature: 1,
+        topP: 0.95,
+      },
+    });
 
-    let messagePayload;
+    console.log(
+      "📤 Sending payload to Gemini:",
+      JSON.stringify(messagePayload, null, 2)
+    );
 
-    if (isNewSession) {
-      // First time → include metadata + student response
-      messagePayload = {
-        ...userLessonInput,
-        student_response: studentResponse,
-      };
-    } else {
-      // Continuing → only send the student response
-      messagePayload = {
-        student_response: studentResponse,
-      };
-    }
+    const response = await chat.sendMessage([
+      { text: JSON.stringify(messagePayload) },
+    ]);
 
-    const safeText = JSON.stringify(messagePayload);
-
-    console.log("📤 Sending message to Gemini:", safeText);
-
-    // ✅ Create stateful chat session with history
-const chat = model.startChat({
-  history: messages.map(m => ({
-    role: m.role === "assistant" ? "model" : m.role, // Vertex expects "model" not "assistant"
-    parts: [{ text: m.content }],
-  })),
-  generationConfig: {
-    maxOutputTokens: 65535,
-    temperature: 1,
-    topP: 0.95,
-  },
-});
-
-// ✅ Get latest student input
-const latestStudentResponse = messages[messages.length - 1]?.content?.trim() || "(no response)";
-
-// ✅ Send message to Gemini (stateful chat)
-const response = await chat.sendMessage(latestStudentResponse);
-
-// 🚨 Log the full response for debugging
-console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
+    console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
 
     let assistantContent =
       response?.response?.candidates?.[0]?.content?.parts
@@ -1167,22 +1147,27 @@ console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
 
     console.log("📥 Extracted assistantContent:", assistantContent);
 
-    let processedContent = assistantContent;
-    let hasVisuals = false;
     const messageId = Date.now().toString();
+    let hasVisuals = false;
+    let processedContent = assistantContent;
 
-    if (assistantContent?.includes("CreateVisual:")) {
-      console.log("🎨 Processing visual content...");
-      hasVisuals = true;
+    if (assistantContent) {
+      const containsCreateVisual = assistantContent.includes("CreateVisual:");
+      const containsImage = /<img\s+src=/.test(assistantContent);
 
-      processedContent = await processLessonContent(
-        assistantContent,
-        normalizedSubject,
-        sessionId,
-        messageId,
-        connection,
-        lesson_id
-      );
+      if (containsCreateVisual || containsImage) {
+        console.log("🎨 Processing visual content...");
+        hasVisuals = true;
+
+        processedContent = await processLessonContent(
+          assistantContent,
+          normalizedSubject,
+          sessionId,
+          messageId,
+          connection,
+          lesson_id
+        );
+      }
     }
 
     if (assistantContent) {
@@ -1266,6 +1251,7 @@ console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
     }
   }
 };
+
 
 
 // Add function to get lesson history
