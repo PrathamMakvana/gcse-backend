@@ -1102,7 +1102,7 @@ const startLesson = async (req, res) => {
     );
 
     const model = vertexAI.getGenerativeModel({
-      model: "gemini-2.5-pro",
+      model: "gemini-2.5-flash",
       generationConfig: {
         maxOutputTokens: 65535,
         temperature: 1,
