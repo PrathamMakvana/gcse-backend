@@ -1,5 +1,22 @@
 const axios = require("axios");
 const mysql = require("mysql2/promise");
+const path = require("path");
+const { VertexAI } = require("@google-cloud/vertexai");
+const fs = require("fs/promises");
+const { GoogleGenAI } = require("@google/genai");
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+process.env.GOOGLE_APPLICATION_CREDENTIALS =
+  "/cred/tutoh-466212-c4b22734d8fb.json";
+
+const PROJECT_ID = "tutoh-466212";
+const LOCATION = "us-central1";
+
+// ✅ Create Vertex AI client
+const vertexAI = new VertexAI({
+  project: PROJECT_ID,
+  location: LOCATION,
+});
 
 const pool = mysql.createPool({
   host: process.env.DB_HOST,
@@ -12,8 +29,8 @@ const pool = mysql.createPool({
   queueLimit: 0,
 });
 
-const PROMPT_API_URL = "https://laravel.tutoh.ai/api/get-prompt/";
-console.log('=============> process.env.OPENAI_API_KEY =================>' + process.env.OPENAI_API_KEY);
+const PROMPT_API_URL = `${process.env.BASE_URL}/get-prompt/`;
+
 // Function to fetch prompt from API
 const fetchPromptFromAPI = async (subject, type) => {
   try {
@@ -110,14 +127,47 @@ const processVisualRequests = async (content) => {
   return processedContent;
 };
 
+// Helper function to check database columns (similar to lesson code)
+const checkDatabaseColumns = async (connection) => {
+  try {
+    const [columns] = await connection.query(`
+      SELECT COLUMN_NAME 
+      FROM INFORMATION_SCHEMA.COLUMNS 
+      WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'mock_test_sessions'
+    `, [process.env.DB_DATABASE]);
+    
+    const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
+    
+    return {
+      hasProcessedContent: columnNames.includes('processed_content'),
+      hasVisuals: columnNames.includes('has_visuals'),
+      hasRawResponse: columnNames.includes('raw_response')
+    };
+  } catch (error) {
+    console.warn("Could not check database columns:", error.message);
+    return {
+      hasProcessedContent: false,
+      hasVisuals: false,
+      hasRawResponse: false
+    };
+  }
+};
+
+const toMySQLDateTime = (date) => {
+  if (!date) return null;
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return null;
+  return d.toISOString().slice(0, 19).replace("T", " ");
+};
+
 const startMockTest = async (req, res) => {
   let connection;
   try {
     const {
       student_id,
       student_name,
-      exam_board = "AQA",
-      tier = "Higher",
+      exam_board,
+      tier,
       mock_cycle = 1,
       predicted_grade = "6",
       is_continuation = false,
@@ -159,112 +209,294 @@ const startMockTest = async (req, res) => {
     try {
       const promptType = exam_type?.trim() || "mock";
       systemPrompt = await fetchPromptFromAPI(subject.trim(), promptType);
-      console.log("Successfully fetched prompt from API for type:", promptType);
+      console.log("✅ Successfully fetched prompt from API for type:", promptType);
     } catch (error) {
-      console.error("Error fetching prompt from API:", error);
+      console.error("❌ Error fetching prompt from API:", error);
       return res.status(500).json({
         success: false,
         error: `Failed to fetch prompt for subject: ${subject} and type: ${exam_type}`
       });
     }
 
-    // Prepare chat history based on whether this is a continuation
-    let chatHistory = [];
+    const normalizedSubject = subject.trim().toLowerCase();
     
-    if (is_continuation) {
-      chatHistory = [...chat_history];
-      if (student_response && current_question) {
-        chatHistory.push({
-          role: "user",
-          content: `Student Response to Question ${current_question}: ${student_response}`
-        });
-      }
-    } else {
-      const mockTestInput = {
-        subject,
-        tier,
-        exam_board,
-        mock_cycle,
-        predicted_grade,
-      };
+    // Check database columns for additional fields
+    const columnCheck = await checkDatabaseColumns(connection);
 
-      chatHistory = [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: JSON.stringify(mockTestInput) }
-      ];
-    }
-
-    const payload = {
-      model: "gpt-4.1",
-      messages: chatHistory,
-      temperature: 1,
-      max_tokens: 4096,
-      top_p: 1,
-      frequency_penalty: 0,
-      presence_penalty: 0
-    };
-
-    const openaiResponse = await axios.post(
-      "https://api.openai.com/v1/chat/completions",
-      payload,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
-        }
-      }
+    // Handle database session management
+    const [existingSessions] = await connection.query(
+      `SELECT id FROM mock_test_sessions 
+       WHERE student_id = ? 
+       AND subject = ? 
+       AND exam_board = ? 
+       AND tier = ? 
+       AND mock_cycle = ?`,
+      [student_id, normalizedSubject, exam_board, tier, mock_cycle]
     );
 
-    let assistantResponse = openaiResponse.data.choices[0].message.content;
+    let sessionId;
+    let isNewSession = false;
 
-    // Process any visual requests in the response
-    assistantResponse = await processVisualRequests(assistantResponse);
+    if (existingSessions.length > 0) {
+      sessionId = existingSessions[0].id;
+      console.log(`🔄 Using existing mock test session ID: ${sessionId}`);
+    } else {
+      const [result] = await connection.query(
+        `INSERT INTO mock_test_sessions (
+          student_id, student_name, subject, exam_board, tier, 
+          mock_cycle, predicted_grade, test_start_time
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          student_id,
+          student_name,
+          normalizedSubject,
+          exam_board,
+          tier,
+          mock_cycle,
+          predicted_grade,
+          toMySQLDateTime(new Date())
+        ]
+      );
+      sessionId = result.insertId;
+      isNewSession = true;
+      console.log(`🆕 Created new mock test session ID: ${sessionId}`);
+    }
 
-    // Extract JSON output from the response
-    const jsonOutput = extractJson(assistantResponse) || {
-      note: "Could not parse JSON from response",
-      raw_response: assistantResponse
-    };
+    // Prepare message payload for Gemini
+    let messagePayload;
+    let geminiHistory = [];
 
     if (is_continuation) {
-      chatHistory.push({
-        role: "assistant",
-        content: assistantResponse
+      // Convert chat_history to Gemini format
+      geminiHistory = chat_history.map(msg => ({
+        role: msg.role === "assistant" ? "model" : msg.role,
+        parts: [{ text: msg.content }]
+      }));
+
+      messagePayload = {
+        student_id,
+        student_name,
+        subject: normalizedSubject,
+        exam_board,
+        tier,
+        mock_cycle,
+        predicted_grade,
+        current_question,
+        student_response,
+        is_continuation: true
+      };
+    } else {
+      messagePayload = {
+        student_id,
+        student_name,
+        subject: normalizedSubject,
+        exam_board,
+        tier,
+        mock_cycle,
+        predicted_grade,
+        test_start_time: toMySQLDateTime(new Date())
+      };
+    }
+
+    console.log("📚 Starting mock test for:", {
+      student_name,
+      subject: normalizedSubject,
+      exam_board,
+      tier,
+      mock_cycle,
+      sessionId
+    });
+
+    // Create Gemini model instance
+    const model = vertexAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      generationConfig: {
+        maxOutputTokens: 65535,
+        temperature: 1,
+        topP: 0.95,
+        candidateCount: 1,
+      },
+      systemInstruction: {
+        role: "system",
+        parts: [{ text: systemPrompt }],
+      },
+    });
+
+    console.log("🤖 Mock test chat session created with Vertex AI Gemini");
+
+    // Start chat session
+    const chat = model.startChat({
+      history: geminiHistory,
+      generationConfig: {
+        maxOutputTokens: 65535,
+        temperature: 1,
+        topP: 0.95,
+      },
+    });
+
+    console.log("📤 Sending payload to Gemini:", JSON.stringify(messagePayload, null, 2));
+
+    // Send message to Gemini
+    const response = await chat.sendMessage([
+      { text: JSON.stringify(messagePayload) }
+    ]);
+
+    console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
+
+    // Extract assistant content
+    let assistantResponse = response?.response?.candidates?.[0]?.content?.parts
+      ?.map((p) => p.text || "")
+      .join("\n") || "";
+
+    console.log("📥 Extracted assistantResponse:", assistantResponse);
+
+    if (!assistantResponse) {
+      console.warn("⚠ No assistant content returned from Gemini");
+      return res.status(500).json({
+        success: false,
+        error: "No response generated from Gemini"
       });
     }
 
+const messageId = `${student_id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    let hasVisuals = false;
+    let processedContent = assistantResponse;
+
+    // Process visual requests in the response
+    if (assistantResponse) {
+      const containsCreateVisual = assistantResponse.includes("CreateVisual:");
+      const containsImage = /<img\s+src=/.test(assistantResponse);
+
+      if (containsCreateVisual || containsImage) {
+        console.log("🎨 Processing visual content...");
+        hasVisuals = true;
+        processedContent = await processVisualRequests(assistantResponse);
+      }
+    }
+
+
+if (assistantResponse) {
+  let insertQuery = 
+    "INSERT INTO mock_test_messages (session_id, role, content, timestamp, message_id, student_id";
+  let insertValues = [
+    sessionId,
+    "assistant",
+    assistantResponse,
+    toMySQLDateTime(new Date()),
+    messageId,
+    student_id
+  ];
+
+  if (columnCheck.hasProcessedContent) {
+    insertQuery += ", processed_content";
+    insertValues.push(processedContent);
+  }
+  if (columnCheck.hasVisuals) {
+    insertQuery += ", has_visuals";
+    insertValues.push(hasVisuals);
+  }
+  if (columnCheck.hasRawResponse) {
+    insertQuery += ", raw_response";
+    insertValues.push(JSON.stringify(response));
+  }
+
+  insertQuery += ") VALUES (?, ?, ?, ?, ?, ?";
+  if (columnCheck.hasProcessedContent) insertQuery += ", ?";
+  if (columnCheck.hasVisuals) insertQuery += ", ?";
+  if (columnCheck.hasRawResponse) insertQuery += ", ?";
+  insertQuery += ")";
+
+  await connection.query(insertQuery, insertValues);
+  console.log(`💬 Saved assistant message for session ${sessionId}`);
+}
+
+    // Save student response if provided
+  if (is_continuation && student_response && current_question) {
+  const userMessageId = `${student_id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  
+  await connection.query(
+    `INSERT INTO mock_test_messages 
+     (session_id, role, content, timestamp, student_id, question_number, message_id) 
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      sessionId,
+      "user",
+      student_response,
+      toMySQLDateTime(new Date()),
+      student_id,
+      current_question,
+      userMessageId
+    ]
+  );
+  console.log(`💬 Saved student response for question ${current_question}`);
+}
+
+
+    // Extract JSON output from the response
+    const jsonOutput = extractJson(processedContent) || {
+      note: "Could not parse JSON from response",
+      raw_response: processedContent
+    };
+
+    // Prepare updated chat history
+    let updatedChatHistory = [...chat_history];
     
-    res.json({
+    if (is_continuation && student_response && current_question) {
+      updatedChatHistory.push({
+        role: "user",
+        content: `Student Response to Question ${current_question}: ${student_response}`,
+        timestamp: new Date()
+      });
+    }
+
+    updatedChatHistory.push({
+      role: "assistant",
+      content: processedContent,
+      timestamp: new Date(),
+      id: messageId
+    });
+
+    const finalResponse = {
       success: true,
+      sessionId,
+      hasVisuals,
       data: {
         ...jsonOutput,
-        chat_history: is_continuation ? chatHistory : [
-          ...chatHistory,
-          { role: "assistant", content: assistantResponse }
-        ],
-        openai_response: openaiResponse.data,
+        chat_history: updatedChatHistory,
+        gemini_response: response,
         session_data: {
           student_id,
           student_name,
-          subject,
+          subject: normalizedSubject,
           exam_board,
           tier,
+          mock_cycle,
+          predicted_grade
         }
       }
-    });
+    };
+
+    console.log("📤 Final Mock Test API Response:", finalResponse);
+
+    res.json(finalResponse);
 
   } catch (error) {
-    console.error("Mock Test Error:", error?.response?.data || error.message);
+    console.error("❌ Mock Test Error:", error?.response?.data || error.message);
     res.status(500).json({
       success: false,
-      error: error?.response?.data?.error?.message || "Internal Server Error",
+      error: error?.response?.data?.error?.message || error.message || "Internal Server Error",
       details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   } finally {
-    if (connection) connection.release();
+    if (connection) {
+      try {
+        connection.release();
+      } catch (e) {
+        console.warn("⚠ Tried releasing connection twice");
+      }
+    }
   }
 };
-
 
 module.exports = {
   startMockTest,
