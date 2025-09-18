@@ -9,6 +9,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 process.env.GOOGLE_APPLICATION_CREDENTIALS =
   "/cred/tutoh-466212-c4b22734d8fb.json";
 
+  
 const PROJECT_ID = "tutoh-466212";
 const LOCATION = "us-central1";
 
@@ -73,59 +74,464 @@ const extractJson = (text) => {
   return null;
 };
 
-const generateVisual = async (description) => {
+
+
+// Ensure outputs directory exists
+const ensureOutputDir = async (dir = "./outputs") => {
   try {
-    const response = await axios.post(
-      "https://api.openai.com/v1/images/generations",
-      {
-        prompt: `A clear GCSE mathematics diagram illustrating: ${description}. 
-                 Use a clean white background with black lines and minimal colors.`,
-        n: 1,
-        size: "512x512",
-        response_format: "url"
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-          "Content-Type": "application/json"
-        }
-      }
-    );
-    return response.data.data[0].url;
-  } catch (error) {
-    console.error("DALL·E Error:", error.response?.data || error.message);
-    return null;
+    await fs.mkdir(dir, { recursive: true });
+    console.log("📁 Output directory ready:", dir);
+  } catch (e) {
+    console.error("❌ Could not create output directory:", e.message);
   }
 };
+
+// Sanitize filenames for Windows/Linux
+const sanitizeFilename = (name) => {
+  return name.replace(/[<>:"/\\|?*\n\r\t]/g, "_").slice(0, 150);
+};
+
+// Helper to detect MIME type from buffer
+const detectMimeType = (buffer) => {
+  if (!buffer || buffer.length < 12) return "application/octet-stream";
+
+  // PNG magic number: 89 50 4E 47 0D 0A 1A 0A
+  if (
+    buffer[0] === 0x89 &&
+    buffer[1] === 0x50 &&
+    buffer[2] === 0x4e &&
+    buffer[3] === 0x47
+  ) {
+    return "image/png";
+  }
+
+  // WEBP magic number: "RIFF"...."WEBP"
+  if (
+    buffer[0] === 0x52 &&
+    buffer[1] === 0x49 &&
+    buffer[2] === 0x46 &&
+    buffer[3] === 0x46 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) {
+    return "image/webp";
+  }
+
+  return "application/octet-stream";
+};
+
+// Helper function to upload base64 image to your endpoint
+const uploadBase64Image = async (base64DataUri) => {
+  try {
+    const response = await fetch(
+      `${process.env.BASE_URL}/upload-base64-image`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          image: base64DataUri,
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error(`Upload failed with status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    console.log("✅ Image uploaded successfully:", result);
+
+    return {
+      success: true,
+      url: result.url,
+      fileName: result.file_name,
+      message: result.message,
+    };
+  } catch (error) {
+    console.error("❌ Error uploading image:", error);
+    return {
+      success: false,
+      error: error.message,
+    };
+  }
+};
+
+const generateDiagram = async (
+  description,
+  imageName = "",
+  sessionId = null,
+  lessonId = null,
+  messageId = null,
+  subject = null
+) => {
+  try {
+    if (!description || description.trim().length === 0) {
+      throw new Error("❌ Description is required to generate a diagram");
+    }
+
+    console.log("🧠 Generating with Gemini AI, prompt:", description);
+
+    const ai = new GoogleGenAI({
+      apiKey: process.env.GOOGLE_CLOUD_API_KEY,
+    });
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash-image-preview", 
+      contents: description,
+    });
+
+    if (!response?.candidates?.[0]?.content?.parts) {
+      throw new Error("❌ No output returned from Gemini AI");
+    }
+
+    await ensureOutputDir();
+    const timestamp = Date.now();
+
+    const baseName =
+      imageName ||
+      sanitizeFilename(description).slice(0, 50) ||
+      `diagram-${timestamp}`;
+    const safeName = sanitizeFilename(baseName);
+
+    let savedFiles = [];
+    let uploadedUrls = [];
+    let index = 1;
+
+    for (const part of response.candidates[0].content.parts) {
+      if (part.inlineData?.data) {
+        const imageData = part.inlineData.data;
+
+        console.log("🔍 Base64 image received:", {
+          length: imageData.length,
+          preview: imageData.substring(0, 80) + "...",
+          ending: "..." + imageData.substring(imageData.length - 80),
+        });
+
+        const buffer = Buffer.from(imageData, "base64");
+
+        // Detect MIME type
+        const mimeType = detectMimeType(buffer);
+        console.log("🧾 Detected MIME type:", mimeType);
+
+        // Save image file locally (optional - for backup)
+        const ext =
+          mimeType === "image/png"
+            ? "png"
+            : mimeType === "image/webp"
+            ? "webp"
+            : "bin";
+        const filePath = path.join("./outputs", `${safeName}-${index}.${ext}`);
+        await fs.writeFile(filePath, buffer);
+        console.log(`✅ Image saved locally at: ${filePath}`);
+        savedFiles.push(filePath);
+
+        // Create proper data URI
+        const dataUri = `data:${mimeType};base64,${imageData}`;
+
+        // Upload image to your endpoint
+        console.log(`🚀 Uploading image ${index} to server...`);
+        
+        try {
+          const uploadResult = await uploadBase64Image(dataUri);
+
+          if (uploadResult.success && uploadResult.url) {
+            console.log(
+              `✅ Image ${index} uploaded successfully: ${uploadResult.url}`
+            );
+            uploadedUrls.push(uploadResult.url);
+
+            // Store successful upload in database
+            if (sessionId && messageId) {
+              try {
+                const dbResult = await storeImageInDatabase(
+                  sessionId,
+                  messageId,
+                  description,
+                  uploadResult.url,
+                  subject,
+                  true, // success = true
+                  null, // no error
+                  lessonId,
+                  null // revisedPrompt
+                );
+                console.log(
+                  `✅ Image ${index} stored in database with ID: ${dbResult}, URL: ${uploadResult.url}`
+                );
+              } catch (dbError) {
+                console.error(
+                  `❌ Failed to store image ${index} in database:`,
+                  dbError.message
+                );
+              }
+            }
+          } else {
+            console.error(
+              `❌ Failed to upload image ${index}:`,
+              uploadResult.error || "Unknown upload error"
+            );
+            
+            // Store upload failure in database
+            if (sessionId && messageId) {
+              try {
+                await storeImageInDatabase(
+                  sessionId,
+                  messageId,
+                  description,
+                  null, // no URL since upload failed
+                  subject,
+                  false, // success = false
+                  uploadResult.error || "Upload failed",
+                  lessonId,
+                  null
+                );
+              } catch (dbError) {
+                console.error(
+                  `❌ Failed to store upload error in database:`,
+                  dbError.message
+                );
+              }
+            }
+          }
+        } catch (uploadError) {
+          console.error(`❌ Upload error for image ${index}:`, uploadError.message);
+          
+          // Store upload exception in database
+          if (sessionId && messageId) {
+            try {
+              await storeImageInDatabase(
+                sessionId,
+                messageId,
+                description,
+                null,
+                subject,
+                false,
+                uploadError.message,
+                lessonId,
+                null
+              );
+            } catch (dbError) {
+              console.error(`❌ Failed to store upload exception in database:`, dbError.message);
+            }
+          }
+        }
+
+        // Save full base64 string to separate file (for debugging)
+        try {
+          const base64LogPath = path.join(
+            "./outputs",
+            `${safeName}-${index}-base64.txt`
+          );
+          await fs.writeFile(base64LogPath, dataUri);
+          console.log(`📄 Full Base64 data URI logged at: ${base64LogPath}`);
+        } catch (logError) {
+          console.warn(`⚠️ Failed to save base64 log:`, logError.message);
+        }
+
+        index++;
+      }
+    }
+
+    // ✅ Check if we have any successful uploads
+    if (uploadedUrls.length === 0) {
+      throw new Error("❌ No images were successfully uploaded");
+    }
+
+    return {
+      success: true,
+      filePaths: savedFiles,
+      uploadedUrls: uploadedUrls,
+      originalDescription: description,
+    };
+    
+  } catch (err) {
+    console.error("❌ Generation failed:", err.message || err);
+
+    // Store generation failure in database if database params are provided
+    if (sessionId && messageId) {
+      try {
+        await storeImageInDatabase(
+          sessionId,
+          messageId,
+          description,
+          null, // no URL since generation failed
+          subject,
+          false, // success = false
+          err.message || err.toString(),
+          lessonId,
+          null
+        );
+        console.log("💾 Stored generation failure in database");
+      } catch (dbError) {
+        console.error(
+          `❌ Failed to store generation error in database:`,
+          dbError.message
+        );
+      }
+    }
+
+    return {
+      success: false,
+      error: err.message || err.toString(),
+      originalDescription: description,
+      filePaths: [],
+      uploadedUrls: [],
+    };
+  }
+};
+
+const storeImageInDatabase = async (
+  sessionId,
+  messageId,
+  description,
+  imageUrl,
+  subject,
+  success,
+  errorMessage = null,
+  lessonId = null,
+  revisedPrompt = null
+) => {
+  let connection;
+  try {
+    // 🔍 DEBUG: Log what we received
+    console.log("🔍 DEBUG - storeImageInDatabase received:", {
+      imageUrl: imageUrl,
+      imageUrlType: typeof imageUrl,
+      imageUrlLength: imageUrl ? imageUrl.length : "null",
+      imageUrlStartsWith: imageUrl ? imageUrl.substring(0, 50) : "null",
+    });
+
+    // Get a dedicated connection
+    connection = await pool.getConnection();
+
+    // Normalize success for MySQL (boolean → tinyint)
+    const successFlag = success ? 1 : 0;
+
+    // imageUrl is now already the full HTTP URL from your upload endpoint
+    // No need for complex URL processing anymore
+    const actualImageUrl = imageUrl;
+
+    // ✅ Ensure ALL fields are properly typed and not undefined
+    const safeValues = [
+      sessionId != null ? Number(sessionId) : null,
+      lessonId != null ? Number(lessonId) : null,
+      messageId != null ? String(messageId) : null,
+      description != null ? String(description) : null,
+      actualImageUrl,
+      subject != null ? String(subject) : null,
+      successFlag,
+      errorMessage != null ? String(errorMessage) : null,
+      revisedPrompt != null ? String(revisedPrompt) : null,
+    ];
+
+    // Debug log to see what we're inserting
+    console.log(
+      "🔍 Safe values for DB insert:",
+      safeValues.map((val, idx) => {
+        const fieldNames = [
+          "session_id",
+          "lesson_id",
+          "message_id",
+          "description",
+          "image_url",
+          "subject",
+          "success",
+          "error_message",
+          "revised_prompt",
+        ];
+        return {
+          field: fieldNames[idx],
+          index: idx,
+          type: typeof val,
+          isNull: val === null,
+          isUndefined: val === undefined,
+          value:
+            val === null
+              ? "NULL"
+              : val === undefined
+              ? "UNDEFINED"
+              : typeof val === "string" && val.length > 50
+              ? val.substring(0, 50) + "..."
+              : val,
+        };
+      })
+    );
+
+    // Insert into DB with explicit connection
+    const [result] = await connection.query(
+      `INSERT INTO generated_diagrams 
+       (session_id, lesson_id, message_id, description, image_url, subject, success, error_message, revised_prompt) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      safeValues
+    );
+
+    console.log(
+      `✅ Stored diagram in database → ID: ${result.insertId}, lesson_id: ${lessonId}, success: ${success}, image_url: ${actualImageUrl}`
+    );
+
+    return result.insertId;
+  } catch (error) {
+    console.error("❌ Error storing image in database:", {
+      error: error.message,
+      code: error.code,
+      errno: error.errno,
+      sqlState: error.sqlState,
+      sqlMessage: error.sqlMessage,
+      // Log the problematic values for debugging
+      sessionId: typeof sessionId,
+      lessonId: typeof lessonId,
+      messageId: typeof messageId,
+      description: typeof description,
+      imageUrl: typeof imageUrl,
+      subject: typeof subject,
+      success: typeof success,
+      errorMessage: typeof errorMessage,
+      revisedPrompt: typeof revisedPrompt,
+    });
+    throw error;
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+};
+
+
 
 const processVisualRequests = async (content) => {
   const visualRegex = /\[CreateVisual: "(.*?)"\]/g;
   let matches;
   const visualPromises = [];
-  const replacements = [];
 
   // Find all visual requests in the content
   while ((matches = visualRegex.exec(content)) !== null) {
     const [fullMatch, description] = matches;
     visualPromises.push(
-      generateVisual(description).then(url => ({
+      generateDiagram(description).then(result => ({
         original: fullMatch,
-        replacement: url ? `<img src="${url}" alt="${description}" class="math-diagram">` : ''
+        replacement:
+          result.success && result.uploadedUrls.length > 0
+            ? `<img src="${result.uploadedUrls[0]}" alt="${description}" class="math-diagram">`
+            : ""
       }))
     );
   }
 
   // Wait for all images to generate
   const results = await Promise.all(visualPromises);
-  
+
   // Replace visual markers with image tags
   let processedContent = content;
-  results.forEach(({original, replacement}) => {
+  results.forEach(({ original, replacement }) => {
     processedContent = processedContent.replace(original, replacement);
   });
 
   return processedContent;
 };
+
 
 // Helper function to check database columns (similar to lesson code)
 const checkDatabaseColumns = async (connection) => {
