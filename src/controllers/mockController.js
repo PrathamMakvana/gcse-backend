@@ -51,25 +51,34 @@ const fetchPromptFromAPI = async (subject, type) => {
 };
 
 const extractJson = (text) => {
-  // Try code block first
   const regex = /```json\s*([\s\S]*?)\s*```/i;
   const match = text.match(regex);
+
   if (match && match[1]) {
+    console.log("📦 Extracted JSON block:\n", match[1]); // 👈 log raw JSON block
     try {
-      return JSON.parse(match[1]);
+      const parsed = JSON.parse(match[1]);
+      console.log("✅ Parsed JSON successfully:", parsed); // 👈 log parsed object
+      return parsed;
     } catch (err) {
-      console.error("Failed to parse JSON inside markdown block:", err.message);
+      console.error("❌ Failed to parse JSON inside markdown block:", err.message);
     }
   }
 
-  // Fallback: remove ```json fences if present
+  // Fallback attempt (strip code fences if regex missed)
   let cleaned = text.replace(/```json/i, "").replace(/```/, "").trim();
-  try {
-    return JSON.parse(cleaned);
-  } catch (err) {
-    console.error("Fallback JSON parsing also failed:", err.message);
+  if (cleaned.startsWith("{") && cleaned.endsWith("}")) {
+    console.log("📦 Cleaned fallback JSON block:\n", cleaned);
+    try {
+      const parsed = JSON.parse(cleaned);
+      console.log("✅ Parsed JSON successfully (fallback):", parsed);
+      return parsed;
+    } catch (err) {
+      console.error("❌ Fallback JSON parsing failed:", err.message);
+    }
   }
 
+  console.warn("⚠️ No valid JSON found in response. Returning null.");
   return null;
 };
 
