@@ -51,7 +51,8 @@ const fetchPromptFromAPI = async (subject, type) => {
 };
 
 const extractJson = (text) => {
-  const regex = /```json\s*([\s\S]*?)\s*```/;
+  // Try code block first
+  const regex = /```json\s*([\s\S]*?)\s*```/i;
   const match = text.match(regex);
   if (match && match[1]) {
     try {
@@ -60,6 +61,17 @@ const extractJson = (text) => {
       console.error("Failed to parse JSON inside markdown block:", err.message);
     }
   }
+
+  // Fallback: remove ```json fences if present
+  let cleaned = text.replace(/```json/i, "").replace(/```/, "").trim();
+  try {
+    return JSON.parse(cleaned);
+  } catch (err) {
+    console.error("Fallback JSON parsing also failed:", err.message);
+  }
+
+  return null;
+};
 
   const firstBraceIndex = text.indexOf("{");
   const lastBraceIndex = text.lastIndexOf("}");
