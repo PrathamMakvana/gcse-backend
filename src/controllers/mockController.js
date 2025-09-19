@@ -51,50 +51,45 @@ const fetchPromptFromAPI = async (subject, type) => {
 };
 
 const extractJson = (text) => {
-  // 1️⃣ Try matching ```json fenced block
-  const regex = /```json\s*([\s\S]*?)\s*```/i;
-  const match = text.match(regex);
+  if (!text) return null;
 
+  // 1️⃣ Look for ```json fenced block (case-insensitive, with/without space)
+  const regex = /```(?:json)?\s*([\s\S]*?)\s*```/i;
+  const match = text.match(regex);
   if (match && match[1]) {
-    console.log("📦 Extracted JSON block:\n", match[1]); // raw JSON block
+    console.log("📦 Extracted JSON block:\n", match[1]);
     try {
-      const parsed = JSON.parse(match[1]);
-      console.log("✅ Parsed JSON successfully:", parsed);
-      return parsed;
+      return JSON.parse(match[1]);
     } catch (err) {
-      console.error("❌ Failed to parse JSON inside markdown block:", err.message);
+      console.error("❌ Failed to parse fenced JSON:", err.message);
     }
   }
 
-  // 2️⃣ Fallback: strip code fences manually
-  let cleaned = text.replace(/```json/i, "").replace(/```/g, "").trim();
+  // 2️⃣ Try stripping fences manually
+  let cleaned = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
   if (cleaned.startsWith("{") && cleaned.endsWith("}")) {
     console.log("📦 Cleaned fallback JSON block:\n", cleaned);
     try {
-      const parsed = JSON.parse(cleaned);
-      console.log("✅ Parsed JSON successfully (fallback):", parsed);
-      return parsed;
+      return JSON.parse(cleaned);
     } catch (err) {
-      console.error("❌ Fallback JSON parsing failed:", err.message);
+      console.error("❌ Failed to parse cleaned JSON:", err.message);
     }
   }
 
-  // 3️⃣ Last resort: extract first {...} block
+  // 3️⃣ Last resort: grab first {...}
   const firstBraceIndex = text.indexOf("{");
   const lastBraceIndex = text.lastIndexOf("}");
   if (firstBraceIndex !== -1 && lastBraceIndex !== -1) {
     const possibleJson = text.slice(firstBraceIndex, lastBraceIndex + 1);
-    console.log("📦 Last-resort extracted block:\n", possibleJson);
+    console.log("📦 Last resort JSON slice:\n", possibleJson);
     try {
-      const parsed = JSON.parse(possibleJson);
-      console.log("✅ Parsed JSON successfully (last resort):", parsed);
-      return parsed;
+      return JSON.parse(possibleJson);
     } catch (err) {
-      console.error("❌ Last-resort JSON parsing failed:", err.message);
+      console.error("❌ Failed to parse last-resort JSON:", err.message);
     }
   }
 
-  console.warn("⚠️ No valid JSON found in response. Returning null.");
+  console.warn("⚠️ No valid JSON found in response.");
   return null;
 };
 
