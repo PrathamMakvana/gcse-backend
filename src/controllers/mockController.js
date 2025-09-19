@@ -9,8 +9,6 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 process.env.GOOGLE_APPLICATION_CREDENTIALS =
   "/cred/tutoh-466212-c4b22734d8fb.json";
 
-
-  
 const PROJECT_ID = "tutoh-466212";
 const LOCATION = "us-central1";
 
@@ -51,6 +49,9 @@ const fetchPromptFromAPI = async (subject, type) => {
 };
 
 const extractJson = (text) => {
+  if (!text) return null;
+
+  // Try fenced block
   const regex = /```json\s*([\s\S]*?)\s*```/;
   const match = text.match(regex);
   if (match && match[1]) {
@@ -61,6 +62,7 @@ const extractJson = (text) => {
     }
   }
 
+  // Try first { ... } block
   const firstBraceIndex = text.indexOf("{");
   const lastBraceIndex = text.lastIndexOf("}");
   if (firstBraceIndex !== -1 && lastBraceIndex !== -1) {
@@ -74,8 +76,6 @@ const extractJson = (text) => {
 
   return null;
 };
-
-
 
 // Ensure outputs directory exists
 const ensureOutputDir = async (dir = "./outputs") => {
@@ -96,7 +96,6 @@ const sanitizeFilename = (name) => {
 const detectMimeType = (buffer) => {
   if (!buffer || buffer.length < 12) return "application/octet-stream";
 
-  // PNG magic number: 89 50 4E 47 0D 0A 1A 0A
   if (
     buffer[0] === 0x89 &&
     buffer[1] === 0x50 &&
@@ -106,7 +105,6 @@ const detectMimeType = (buffer) => {
     return "image/png";
   }
 
-  // WEBP magic number: "RIFF"...."WEBP"
   if (
     buffer[0] === 0x52 &&
     buffer[1] === 0x49 &&
@@ -181,7 +179,7 @@ const generateDiagram = async (
     });
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-image-preview", 
+      model: "gemini-2.5-flash-image-preview",
       contents: description,
     });
 
@@ -214,11 +212,9 @@ const generateDiagram = async (
 
         const buffer = Buffer.from(imageData, "base64");
 
-        // Detect MIME type
         const mimeType = detectMimeType(buffer);
         console.log("🧾 Detected MIME type:", mimeType);
 
-        // Save image file locally (optional - for backup)
         const ext =
           mimeType === "image/png"
             ? "png"
@@ -230,12 +226,10 @@ const generateDiagram = async (
         console.log(`✅ Image saved locally at: ${filePath}`);
         savedFiles.push(filePath);
 
-        // Create proper data URI
         const dataUri = `data:${mimeType};base64,${imageData}`;
 
-        // Upload image to your endpoint
         console.log(`🚀 Uploading image ${index} to server...`);
-        
+
         try {
           const uploadResult = await uploadBase64Image(dataUri);
 
@@ -245,7 +239,6 @@ const generateDiagram = async (
             );
             uploadedUrls.push(uploadResult.url);
 
-            // Store successful upload in database
             if (sessionId && messageId) {
               try {
                 const dbResult = await storeImageInDatabase(
@@ -254,10 +247,10 @@ const generateDiagram = async (
                   description,
                   uploadResult.url,
                   subject,
-                  true, // success = true
-                  null, // no error
+                  true,
+                  null,
                   lessonId,
-                  null // revisedPrompt
+                  null
                 );
                 console.log(
                   `✅ Image ${index} stored in database with ID: ${dbResult}, URL: ${uploadResult.url}`
@@ -274,17 +267,16 @@ const generateDiagram = async (
               `❌ Failed to upload image ${index}:`,
               uploadResult.error || "Unknown upload error"
             );
-            
-            // Store upload failure in database
+
             if (sessionId && messageId) {
               try {
                 await storeImageInDatabase(
                   sessionId,
                   messageId,
                   description,
-                  null, // no URL since upload failed
+                  null,
                   subject,
-                  false, // success = false
+                  false,
                   uploadResult.error || "Upload failed",
                   lessonId,
                   null
@@ -299,8 +291,7 @@ const generateDiagram = async (
           }
         } catch (uploadError) {
           console.error(`❌ Upload error for image ${index}:`, uploadError.message);
-          
-          // Store upload exception in database
+
           if (sessionId && messageId) {
             try {
               await storeImageInDatabase(
@@ -320,7 +311,6 @@ const generateDiagram = async (
           }
         }
 
-        // Save full base64 string to separate file (for debugging)
         try {
           const base64LogPath = path.join(
             "./outputs",
@@ -336,7 +326,6 @@ const generateDiagram = async (
       }
     }
 
-    // ✅ Check if we have any successful uploads
     if (uploadedUrls.length === 0) {
       throw new Error("❌ No images were successfully uploaded");
     }
@@ -347,20 +336,18 @@ const generateDiagram = async (
       uploadedUrls: uploadedUrls,
       originalDescription: description,
     };
-    
   } catch (err) {
     console.error("❌ Generation failed:", err.message || err);
 
-    // Store generation failure in database if database params are provided
     if (sessionId && messageId) {
       try {
         await storeImageInDatabase(
           sessionId,
           messageId,
           description,
-          null, // no URL since generation failed
+          null,
           subject,
-          false, // success = false
+          false,
           err.message || err.toString(),
           lessonId,
           null
@@ -397,7 +384,6 @@ const storeImageInDatabase = async (
 ) => {
   let connection;
   try {
-    // 🔍 DEBUG: Log what we received
     console.log("🔍 DEBUG - storeImageInDatabase received:", {
       imageUrl: imageUrl,
       imageUrlType: typeof imageUrl,
@@ -405,17 +391,10 @@ const storeImageInDatabase = async (
       imageUrlStartsWith: imageUrl ? imageUrl.substring(0, 50) : "null",
     });
 
-    // Get a dedicated connection
     connection = await pool.getConnection();
-
-    // Normalize success for MySQL (boolean → tinyint)
     const successFlag = success ? 1 : 0;
-
-    // imageUrl is now already the full HTTP URL from your upload endpoint
-    // No need for complex URL processing anymore
     const actualImageUrl = imageUrl;
 
-    // ✅ Ensure ALL fields are properly typed and not undefined
     const safeValues = [
       sessionId != null ? Number(sessionId) : null,
       lessonId != null ? Number(lessonId) : null,
@@ -428,44 +407,16 @@ const storeImageInDatabase = async (
       revisedPrompt != null ? String(revisedPrompt) : null,
     ];
 
-    // Debug log to see what we're inserting
     console.log(
       "🔍 Safe values for DB insert:",
-      safeValues.map((val, idx) => {
-        const fieldNames = [
-          "session_id",
-          "lesson_id",
-          "message_id",
-          "description",
-          "image_url",
-          "subject",
-          "success",
-          "error_message",
-          "revised_prompt",
-        ];
-        return {
-          field: fieldNames[idx],
-          index: idx,
-          type: typeof val,
-          isNull: val === null,
-          isUndefined: val === undefined,
-          value:
-            val === null
-              ? "NULL"
-              : val === undefined
-              ? "UNDEFINED"
-              : typeof val === "string" && val.length > 50
-              ? val.substring(0, 50) + "..."
-              : val,
-        };
-      })
+      safeValues
     );
 
-    // Insert into DB with explicit connection
+    const placeholders = Array(safeValues.length).fill("?").join(", ");
     const [result] = await connection.query(
       `INSERT INTO generated_diagrams 
        (session_id, lesson_id, message_id, description, image_url, subject, success, error_message, revised_prompt) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (${placeholders})`,
       safeValues
     );
 
@@ -475,23 +426,7 @@ const storeImageInDatabase = async (
 
     return result.insertId;
   } catch (error) {
-    console.error("❌ Error storing image in database:", {
-      error: error.message,
-      code: error.code,
-      errno: error.errno,
-      sqlState: error.sqlState,
-      sqlMessage: error.sqlMessage,
-      // Log the problematic values for debugging
-      sessionId: typeof sessionId,
-      lessonId: typeof lessonId,
-      messageId: typeof messageId,
-      description: typeof description,
-      imageUrl: typeof imageUrl,
-      subject: typeof subject,
-      success: typeof success,
-      errorMessage: typeof errorMessage,
-      revisedPrompt: typeof revisedPrompt,
-    });
+    console.error("❌ Error storing image in database:", error.message);
     throw error;
   } finally {
     if (connection) {
@@ -500,14 +435,11 @@ const storeImageInDatabase = async (
   }
 };
 
-
-
 const processVisualRequests = async (content) => {
   const visualRegex = /\[CreateVisual: "(.*?)"\]/g;
   let matches;
   const visualPromises = [];
 
-  // Find all visual requests in the content
   while ((matches = visualRegex.exec(content)) !== null) {
     const [fullMatch, description] = matches;
     visualPromises.push(
@@ -521,10 +453,7 @@ const processVisualRequests = async (content) => {
     );
   }
 
-  // Wait for all images to generate
   const results = await Promise.all(visualPromises);
-
-  // Replace visual markers with image tags
   let processedContent = content;
   results.forEach(({ original, replacement }) => {
     processedContent = processedContent.replace(original, replacement);
@@ -533,8 +462,6 @@ const processVisualRequests = async (content) => {
   return processedContent;
 };
 
-
-// Helper function to check database columns (similar to lesson code)
 const checkDatabaseColumns = async (connection) => {
   try {
     const [columns] = await connection.query(`
@@ -542,9 +469,9 @@ const checkDatabaseColumns = async (connection) => {
       FROM INFORMATION_SCHEMA.COLUMNS 
       WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'mock_test_sessions'
     `, [process.env.DB_DATABASE]);
-    
+
     const columnNames = columns.map(col => col.COLUMN_NAME.toLowerCase());
-    
+
     return {
       hasProcessedContent: columnNames.includes('processed_content'),
       hasVisuals: columnNames.includes('has_visuals'),
@@ -567,29 +494,17 @@ const toMySQLDateTime = (date) => {
   return d.toISOString().slice(0, 19).replace("T", " ");
 };
 
-
-
 function cleanAssistantResponse(raw) {
   if (!raw) return "";
-
-  // Split by --- sections
   const blocks = raw.split(/---+/);
-
-  // Always keep first block (metadata + welcome)
   let cleaned = blocks[0].trim();
-
-  // Keep only blocks with questions
   for (let i = 1; i < blocks.length; i++) {
     if (blocks[i].includes("📝 QUESTION")) {
       cleaned += "\n\n---\n" + blocks[i].trim();
     }
   }
-
   return cleaned;
 }
-
-
-
 
 const startMockTest = async (req, res) => {
   let connection;
@@ -632,10 +547,8 @@ const startMockTest = async (req, res) => {
       });
     }
 
-    // Get connection from pool
     connection = await pool.getConnection();
 
-    // Fetch the appropriate prompt based on subject and exam_type
     let systemPrompt;
     try {
       const promptType = exam_type?.trim() || "mock";
@@ -650,11 +563,8 @@ const startMockTest = async (req, res) => {
     }
 
     const normalizedSubject = subject.trim().toLowerCase();
-    
-    // Check database columns for additional fields
     const columnCheck = await checkDatabaseColumns(connection);
 
-    // Handle database session management
     const [existingSessions] = await connection.query(
       `SELECT id FROM mock_test_sessions 
        WHERE student_id = ? 
@@ -693,16 +603,18 @@ const startMockTest = async (req, res) => {
       console.log(`🆕 Created new mock test session ID: ${sessionId}`);
     }
 
-    // Prepare message payload for Gemini
     let messagePayload;
     let geminiHistory = [];
 
     if (is_continuation) {
-      // Convert chat_history to Gemini format
-      geminiHistory = chat_history.map(msg => ({
-        role: msg.role === "assistant" ? "model" : msg.role,
-        parts: [{ text: msg.content }]
-      }));
+      geminiHistory = chat_history.map(msg => {
+        if (msg.role === "assistant") {
+          return { role: "model", parts: [{ text: msg.content }] };
+        } else if (msg.role === "user") {
+          return { role: "user", parts: [{ text: msg.content }] };
+        }
+        return null;
+      }).filter(Boolean);
 
       messagePayload = {
         student_id,
@@ -738,7 +650,6 @@ const startMockTest = async (req, res) => {
       sessionId
     });
 
-    // Create Gemini model instance
     const model = vertexAI.getGenerativeModel({
       model: "gemini-2.5-flash",
       generationConfig: {
@@ -755,7 +666,6 @@ const startMockTest = async (req, res) => {
 
     console.log("🤖 Mock test chat session created with Vertex AI Gemini");
 
-    // Start chat session
     const chat = model.startChat({
       history: geminiHistory,
       generationConfig: {
@@ -767,14 +677,12 @@ const startMockTest = async (req, res) => {
 
     console.log("📤 Sending payload to Gemini:", JSON.stringify(messagePayload, null, 2));
 
-    // Send message to Gemini
     const response = await chat.sendMessage([
       { text: JSON.stringify(messagePayload) }
     ]);
 
     console.log("📥 Gemini raw response:", JSON.stringify(response, null, 2));
 
-    // Extract assistant content
     let assistantResponse = response?.response?.candidates?.[0]?.content?.parts
       ?.map((p) => p.text || "")
       .join("\n") || "";
@@ -789,90 +697,80 @@ const startMockTest = async (req, res) => {
       });
     }
 
-const messageId = `${student_id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const messageId = `${student_id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     let hasVisuals = false;
-let processedContent = cleanAssistantResponse(assistantResponse);
 
-// Process visual requests in the response
-if (assistantResponse) {
-  const containsCreateVisual = assistantResponse.includes("CreateVisual:");
-  const containsImage = /<img\s+src=/.test(assistantResponse);
-
-  if (containsCreateVisual || containsImage) {
-    console.log("🎨 Processing visual content...");
-    hasVisuals = true;
-    processedContent = await processVisualRequests(processedContent);
-  }
-}
-
-
-
-if (assistantResponse) {
-  let insertQuery = 
-    "INSERT INTO mock_test_messages (session_id, role, content, timestamp, message_id, student_id";
-  let insertValues = [
-    sessionId,
-    "assistant",
-    assistantResponse,
-    toMySQLDateTime(new Date()),
-    messageId,
-    student_id
-  ];
-
-  if (columnCheck.hasProcessedContent) {
-    insertQuery += ", processed_content";
-    insertValues.push(processedContent);
-  }
-  if (columnCheck.hasVisuals) {
-    insertQuery += ", has_visuals";
-    insertValues.push(hasVisuals);
-  }
-  if (columnCheck.hasRawResponse) {
-    insertQuery += ", raw_response";
-    insertValues.push(JSON.stringify(response));
-  }
-
-  insertQuery += ") VALUES (?, ?, ?, ?, ?, ?";
-  if (columnCheck.hasProcessedContent) insertQuery += ", ?";
-  if (columnCheck.hasVisuals) insertQuery += ", ?";
-  if (columnCheck.hasRawResponse) insertQuery += ", ?";
-  insertQuery += ")";
-
-  await connection.query(insertQuery, insertValues);
-  console.log(`💬 Saved assistant message for session ${sessionId}`);
-}
-
-    // Save student response if provided
-  if (is_continuation && student_response && current_question) {
-  const userMessageId = `${student_id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  
-  await connection.query(
-    `INSERT INTO mock_test_messages 
-     (session_id, role, content, timestamp, student_id, question_number, message_id) 
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [
-      sessionId,
-      "user",
-      student_response,
-      toMySQLDateTime(new Date()),
-      student_id,
-      current_question,
-      userMessageId
-    ]
-  );
-  console.log(`💬 Saved student response for question ${current_question}`);
-}
-
-
-    // Extract JSON output from the response
-    const jsonOutput = extractJson(processedContent) || {
+    // Try JSON before cleaning
+    const jsonOutput = extractJson(assistantResponse) || {
       note: "Could not parse JSON from response",
-      raw_response: processedContent
+      raw_response: assistantResponse
     };
 
-    // Prepare updated chat history
+    let processedContent = cleanAssistantResponse(assistantResponse);
+
+    if (assistantResponse) {
+      const containsCreateVisual = assistantResponse.includes("CreateVisual:");
+      const containsImage = /<img\s+src=/.test(assistantResponse);
+
+      if (containsCreateVisual || containsImage) {
+        console.log("🎨 Processing visual content...");
+        hasVisuals = true;
+        processedContent = await processVisualRequests(processedContent);
+      }
+    }
+
+    if (assistantResponse) {
+      let insertQuery = 
+        "INSERT INTO mock_test_messages (session_id, role, content, timestamp, message_id, student_id";
+      let insertValues = [
+        sessionId,
+        "assistant",
+        assistantResponse,
+        toMySQLDateTime(new Date()),
+        messageId,
+        student_id
+      ];
+
+      if (columnCheck.hasProcessedContent) {
+        insertQuery += ", processed_content";
+        insertValues.push(processedContent);
+      }
+      if (columnCheck.hasVisuals) {
+        insertQuery += ", has_visuals";
+        insertValues.push(hasVisuals);
+      }
+      if (columnCheck.hasRawResponse) {
+        insertQuery += ", raw_response";
+        insertValues.push(JSON.stringify(response));
+      }
+
+      const placeholders = Array(insertValues.length).fill("?").join(", ");
+      insertQuery += `) VALUES (${placeholders})`;
+
+      await connection.query(insertQuery, insertValues);
+      console.log(`💬 Saved assistant message for session ${sessionId}`);
+    }
+
+    if (is_continuation && student_response && current_question) {
+      const userMessageId = `${student_id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      await connection.query(
+        `INSERT INTO mock_test_messages 
+         (session_id, role, content, timestamp, student_id, question_number, message_id) 
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [
+          sessionId,
+          "user",
+          student_response,
+          toMySQLDateTime(new Date()),
+          student_id,
+          current_question,
+          userMessageId
+        ]
+      );
+      console.log(`💬 Saved student response for question ${current_question}`);
+    }
+
     let updatedChatHistory = [...chat_history];
-    
     if (is_continuation && student_response && current_question) {
       updatedChatHistory.push({
         role: "user",
@@ -908,8 +806,7 @@ if (assistantResponse) {
       }
     };
 
-    console.log("📤 Final Mock Test API Response:", finalResponse);
-
+    console.log("📤 Final Mock Test API Response:", JSON.stringify(finalResponse, null, 2));
     res.json(finalResponse);
 
   } catch (error) {
