@@ -9,6 +9,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 process.env.GOOGLE_APPLICATION_CREDENTIALS =
   "/cred/tutoh-466212-c4b22734d8fb.json";
 
+
   
 const PROJECT_ID = "tutoh-466212";
 const LOCATION = "us-central1";
@@ -566,6 +567,30 @@ const toMySQLDateTime = (date) => {
   return d.toISOString().slice(0, 19).replace("T", " ");
 };
 
+
+
+function cleanAssistantResponse(raw) {
+  if (!raw) return "";
+
+  // Split by --- sections
+  const blocks = raw.split(/---+/);
+
+  // Always keep first block (metadata + welcome)
+  let cleaned = blocks[0].trim();
+
+  // Keep only blocks with questions
+  for (let i = 1; i < blocks.length; i++) {
+    if (blocks[i].includes("📝 QUESTION")) {
+      cleaned += "\n\n---\n" + blocks[i].trim();
+    }
+  }
+
+  return cleaned;
+}
+
+
+
+
 const startMockTest = async (req, res) => {
   let connection;
   try {
@@ -766,19 +791,20 @@ const startMockTest = async (req, res) => {
 
 const messageId = `${student_id}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     let hasVisuals = false;
-    let processedContent = assistantResponse;
+let processedContent = cleanAssistantResponse(assistantResponse);
 
-    // Process visual requests in the response
-    if (assistantResponse) {
-      const containsCreateVisual = assistantResponse.includes("CreateVisual:");
-      const containsImage = /<img\s+src=/.test(assistantResponse);
+// Process visual requests in the response
+if (assistantResponse) {
+  const containsCreateVisual = assistantResponse.includes("CreateVisual:");
+  const containsImage = /<img\s+src=/.test(assistantResponse);
 
-      if (containsCreateVisual || containsImage) {
-        console.log("🎨 Processing visual content...");
-        hasVisuals = true;
-        processedContent = await processVisualRequests(assistantResponse);
-      }
-    }
+  if (containsCreateVisual || containsImage) {
+    console.log("🎨 Processing visual content...");
+    hasVisuals = true;
+    processedContent = await processVisualRequests(processedContent);
+  }
+}
+
 
 
 if (assistantResponse) {
