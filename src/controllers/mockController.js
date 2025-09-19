@@ -80,7 +80,7 @@ const extractJson = (text) => {
 
   console.warn("⚠️ No valid JSON found in response. Returning null.");
   return null;
-};
+
 
   const firstBraceIndex = text.indexOf("{");
   const lastBraceIndex = text.lastIndexOf("}");
