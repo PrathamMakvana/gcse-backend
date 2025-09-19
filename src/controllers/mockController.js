@@ -51,22 +51,23 @@ const fetchPromptFromAPI = async (subject, type) => {
 };
 
 const extractJson = (text) => {
+  // 1️⃣ Try matching ```json fenced block
   const regex = /```json\s*([\s\S]*?)\s*```/i;
   const match = text.match(regex);
 
   if (match && match[1]) {
-    console.log("📦 Extracted JSON block:\n", match[1]); // 👈 log raw JSON block
+    console.log("📦 Extracted JSON block:\n", match[1]); // raw JSON block
     try {
       const parsed = JSON.parse(match[1]);
-      console.log("✅ Parsed JSON successfully:", parsed); // 👈 log parsed object
+      console.log("✅ Parsed JSON successfully:", parsed);
       return parsed;
     } catch (err) {
       console.error("❌ Failed to parse JSON inside markdown block:", err.message);
     }
   }
 
-  // Fallback attempt (strip code fences if regex missed)
-  let cleaned = text.replace(/```json/i, "").replace(/```/, "").trim();
+  // 2️⃣ Fallback: strip code fences manually
+  let cleaned = text.replace(/```json/i, "").replace(/```/g, "").trim();
   if (cleaned.startsWith("{") && cleaned.endsWith("}")) {
     console.log("📦 Cleaned fallback JSON block:\n", cleaned);
     try {
@@ -78,25 +79,24 @@ const extractJson = (text) => {
     }
   }
 
-  console.warn("⚠️ No valid JSON found in response. Returning null.");
-  return null;
-
-
+  // 3️⃣ Last resort: extract first {...} block
   const firstBraceIndex = text.indexOf("{");
   const lastBraceIndex = text.lastIndexOf("}");
   if (firstBraceIndex !== -1 && lastBraceIndex !== -1) {
     const possibleJson = text.slice(firstBraceIndex, lastBraceIndex + 1);
+    console.log("📦 Last-resort extracted block:\n", possibleJson);
     try {
-      return JSON.parse(possibleJson);
+      const parsed = JSON.parse(possibleJson);
+      console.log("✅ Parsed JSON successfully (last resort):", parsed);
+      return parsed;
     } catch (err) {
-      console.error("Fallback JSON parsing also failed:", err.message);
+      console.error("❌ Last-resort JSON parsing failed:", err.message);
     }
   }
 
+  console.warn("⚠️ No valid JSON found in response. Returning null.");
   return null;
 };
-
-
 
 // Ensure outputs directory exists
 const ensureOutputDir = async (dir = "./outputs") => {
